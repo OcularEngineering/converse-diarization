@@ -1,0 +1,15 @@
+name = "gpt-4o-transcribe-diarize"
+display_name = "GPT-4o Transcribe Diarize"
+vendor = "OpenAI"
+provider = "openai-compatible"
+model = "gpt-4o-transcribe-diarize"
+env = ["OPENAI_API_KEY"]
+href = "https://platform.openai.com/docs/guides/speech-to-text"
+notes = "Segment-level speaker turns from response_format = diarized_json; scored as returned. Audio is re-encoded to MP3 for the 25 MB upload cap (requires ffmpeg)."
+
+[options]
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+response_format = "diarized_json"
+chunking_strategy = "auto"
+upload = "mp3"

@@ -1,0 +1,27 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Data and run artifacts (large, reproducible from the manifest)
+data/
+runs/
+reports/*.html
+!reports/.gitkeep
+
+# Local model caches
+.cache/
+.DS_Store
+
+# Reference RTTM exports
+reference-rttm/
