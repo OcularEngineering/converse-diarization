@@ -1,0 +1,12 @@
+name = "deepgram-nova-3"
+display_name = "Nova-3"
+vendor = "Deepgram"
+provider = "deepgram"
+model = "nova-3"
+env = ["DEEPGRAM_API_KEY"]
+href = "https://developers.deepgram.com/docs/diarization"
+notes = "Word-level speaker labels (diarize = true); same-speaker words up to 0.2 s apart are merged before scoring."
+
+[options]
+base_url = "https://api.deepgram.com/v1"
+api_key_env = "DEEPGRAM_API_KEY"

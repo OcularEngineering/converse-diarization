@@ -1,0 +1,12 @@
+name = "assemblyai-universal"
+display_name = "Universal"
+vendor = "AssemblyAI"
+provider = "assemblyai"
+model = "universal"
+env = ["ASSEMBLYAI_API_KEY"]
+href = "https://www.assemblyai.com/docs/speech-to-text/speaker-diarization"
+notes = "Asynchronous transcript with speaker_labels = true; word-level speaker labels merged with the 0.2 s rule before scoring."
+
+[options]
+base_url = "https://api.assemblyai.com"
+api_key_env = "ASSEMBLYAI_API_KEY"

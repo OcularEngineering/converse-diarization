@@ -1,0 +1,11 @@
+name = "pyannote-community-1"
+display_name = "pyannote Community-1"
+vendor = "pyannote"
+provider = "pyannote"
+model = "pyannote/speaker-diarization-community-1"
+env = ["HF_TOKEN"]
+href = "https://huggingface.co/pyannote/speaker-diarization-community-1"
+notes = "Runs locally (uv sync --extra local). Gated checkpoint: accept the terms on Hugging Face and set HF_TOKEN. Default pipeline settings, no speaker count supplied, overlapping turns kept."
+
+[options]
+device = "auto"

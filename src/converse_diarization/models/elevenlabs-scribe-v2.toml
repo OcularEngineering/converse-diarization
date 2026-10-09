@@ -1,0 +1,12 @@
+name = "elevenlabs-scribe-v2"
+display_name = "Scribe v2"
+vendor = "ElevenLabs"
+provider = "elevenlabs"
+model = "scribe_v2"
+env = ["ELEVENLABS_API_KEY"]
+href = "https://elevenlabs.io/docs/capabilities/speech-to-text"
+notes = "Word-level speaker labels (diarize = true, timestamps_granularity = word); same-speaker words up to 0.2 s apart are merged before scoring."
+
+[options]
+base_url = "https://api.elevenlabs.io/v1"
+api_key_env = "ELEVENLABS_API_KEY"

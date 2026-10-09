@@ -1,0 +1,46 @@
+# Models the Ocular AI Converse-Diarization harness runs. One table per model.
+# Minimum for an OpenAI-compatible diarizing endpoint: url + key (the NAME of the variable in .env).
+# Optional: model (defaults to the table name), vendor, display_name, href, notes, provider
+# (openai-compatible | deepgram | assemblyai | elevenlabs | pyannote | rttm) and provider options.
+# Add one from the shell: converse-diarization models add <name> --url <base url> --key <secret or ENV>
+
+[gpt-4o-transcribe-diarize]
+url = "https://api.openai.com/v1"
+key = "OPENAI_API_KEY"
+vendor = "OpenAI"
+display_name = "GPT-4o Transcribe Diarize"
+href = "https://platform.openai.com/docs/guides/speech-to-text"
+
+[gpt-4o-transcribe-diarize.options]
+response_format = "diarized_json"
+chunking_strategy = "auto"
+upload = "mp3"
+
+[deepgram-nova-3]
+url = "https://api.deepgram.com/v1"
+key = "DEEPGRAM_API_KEY"
+provider = "deepgram"
+model = "nova-3"
+vendor = "Deepgram"
+display_name = "Nova-3"
+href = "https://developers.deepgram.com/docs/diarization"
+
+[elevenlabs-scribe-v2]
+url = "https://api.elevenlabs.io/v1"
+key = "ELEVENLABS_API_KEY"
+provider = "elevenlabs"
+model = "scribe_v2"
+vendor = "ElevenLabs"
+display_name = "Scribe v2"
+href = "https://elevenlabs.io/docs/capabilities/speech-to-text"
+
+[pyannote-community-1]
+provider = "pyannote"
+model = "pyannote/speaker-diarization-community-1"
+env = ["HF_TOKEN"]                     # gated checkpoint; runs locally after `uv sync --extra local`
+vendor = "pyannote"
+display_name = "pyannote Community-1"
+href = "https://huggingface.co/pyannote/speaker-diarization-community-1"
+
+[pyannote-community-1.options]
+device = "auto"
