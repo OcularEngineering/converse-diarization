@@ -84,6 +84,15 @@ def builtin_model_names() -> list[str]:
     return sorted(names)
 
 
+def _reject_secret_keys(source: str, key: str, value: Any) -> None:
+    """Options (and nested option tables such as ``provider_options``) must not carry credentials."""
+    if _SECRET_KEY.search(key) and not key.endswith("_env"):
+        raise ConfigError(f"{source}: option {key!r} looks like a credential; put secrets in .env instead")
+    if isinstance(value, dict):
+        for nested_key, nested_value in value.items():
+            _reject_secret_keys(source, f"{key}.{nested_key}", nested_value)
+
+
 def parse_model_config(text: str, *, source: str = "<memory>") -> ModelConfig:
     try:
         data = tomllib.loads(text)
@@ -109,10 +118,7 @@ def parse_model_config(text: str, *, source: str = "<memory>") -> ModelConfig:
                     f"not hold the secret itself"
                 )
             continue
-        if _SECRET_KEY.search(key):
-            raise ConfigError(f"{source}: option {key!r} looks like a credential; put secrets in .env instead")
-        if isinstance(value, dict):
-            raise ConfigError(f"{source}: option {key!r} must be a scalar or list")
+        _reject_secret_keys(source, key, value)
 
     env = data.get("env", [])
     if isinstance(env, str):

@@ -143,6 +143,66 @@ def test_cli_models_add_with_literal_key_writes_dotenv(tmp_path, capsys, monkeyp
     assert main(["--models-file", str(registry), "--env-file", str(env), "check", "--model", "acme-stt-1"]) == 0
 
 
+def test_cli_models_add_openrouter_route(tmp_path, capsys, monkeypatch):
+    import tomllib
+
+    registry = tmp_path / "models.toml"
+    monkeypatch.setenv("OPENROUTER_API_KEY", "x")
+    args = ["--models-file", str(registry), "models", "add"]
+    assert main([*args, "nova", "--openrouter", "--model", "deepgram/nova-3", "--upload", "flac"]) == 0
+    out = capsys.readouterr().out
+    assert "nova: ready (openrouter:deepgram/nova-3)" in out
+    data = tomllib.loads(registry.read_text(encoding="utf-8"))
+    assert data["nova"]["provider"] == "openrouter" and data["nova"]["key"] == "OPENROUTER_API_KEY"
+    assert data["nova"]["notes"] == "via OpenRouter" and data["nova"]["href"] == "https://openrouter.ai/deepgram/nova-3"
+    assert "url" not in data["nova"]
+
+    # Nested vendor options arrive as JSON on the shell and round-trip through the file as inline tables.
+    code = main(
+        [
+            *args,
+            "acme",
+            "--openrouter",
+            "--model",
+            "acme/listen-1",
+            "--upload",
+            "flac",
+            "--option",
+            'provider_options={"acme": {"speakers": "auto"}}',
+        ]
+    )
+    assert code == 0, capsys.readouterr()
+    data = tomllib.loads(registry.read_text(encoding="utf-8"))
+    assert data["acme"]["options"]["provider_options"] == {"acme": {"speakers": "auto"}}
+
+    # The direct route is untouched and lives next to the routed entries.
+    assert (
+        main(
+            [
+                *args,
+                "nova-direct",
+                "--provider",
+                "deepgram",
+                "--url",
+                "https://api.deepgram.com/v1",
+                "--key",
+                "OPENROUTER_API_KEY",
+                "--model",
+                "nova-3",
+            ]
+        )
+        == 0
+    )
+    assert "nova-direct" in registry.read_text(encoding="utf-8")
+
+    assert main([*args, "x", "--openrouter"]) == 2
+    assert "needs the OpenRouter model id" in capsys.readouterr().err
+    assert main([*args, "x", "--openrouter", "--model", "a/b", "--url", "https://y"]) == 2
+    assert main([*args, "x", "--openrouter", "--model", "a/b", "--provider", "deepgram"]) == 2
+    assert main([*args, "x", "--openrouter", "--model", "a/b", "--option", "provider_options={oops"]) == 2
+    assert "does not parse" in capsys.readouterr().err
+
+
 def test_cli_models_add_requires_url_and_key(tmp_path, capsys):
     registry = tmp_path / "models.toml"
     assert main(["--models-file", str(registry), "models", "add", "x", "--key", "X_API_KEY"]) == 2

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
 import sys
@@ -18,6 +19,7 @@ from converse_diarization.providers.assemblyai import AssemblyAIProvider
 from converse_diarization.providers.deepgram import DeepgramProvider
 from converse_diarization.providers.elevenlabs import ElevenLabsProvider
 from converse_diarization.providers.openai_compatible import OpenAICompatibleProvider
+from converse_diarization.providers.openrouter import KNOWN_PROVIDER_OPTIONS, OpenRouterProvider
 from converse_diarization.providers.pyannote import PyannoteProvider
 from converse_diarization.providers.rttm import RttmProvider, parse_rttm
 
@@ -88,7 +90,15 @@ def wav(tmp_path: Path) -> Path:
 
 
 def test_registry_exposes_every_provider():
-    assert set(PROVIDERS) == {"openai-compatible", "deepgram", "assemblyai", "elevenlabs", "pyannote", "rttm"}
+    assert set(PROVIDERS) == {
+        "openai-compatible",
+        "openrouter",
+        "deepgram",
+        "assemblyai",
+        "elevenlabs",
+        "pyannote",
+        "rttm",
+    }
     assert isinstance(create_provider(_config("deepgram", "nova-3")), DeepgramProvider)
     for cls in PROVIDERS.values():
         assert cls.option_names, f"{cls.key} must declare option_names"
@@ -297,6 +307,109 @@ def _deepgram_body(*, words: bool = True) -> dict[str, Any]:
             ],
         },
     }
+
+
+# --- OpenRouter ----------------------------------------------------------------
+
+OPENROUTER_KEY = "sk-or-v1-testtesttesttest"
+OPENROUTER_VERBOSE = {
+    "text": "Hi there. Hello.",
+    "language": "en",
+    "duration": 1.25,
+    "segments": [
+        {"start": 0.1, "end": 0.6, "text": "Hi there.", "speaker": 0},
+        {"start": 0.7, "end": 1.0, "text": "Hello.", "speaker": 1},
+    ],
+    "words": [
+        {"word": "Hi", "start": 0.1, "end": 0.3, "speaker": 0},
+        {"word": "there.", "start": 0.35, "end": 0.6, "speaker": 0},
+        {"word": "Hello.", "start": 0.7, "end": 1.0, "speaker": 1},
+    ],
+    "usage": {"seconds": 1.25, "cost": 0.0001},
+}
+
+
+def _openrouter(monkeypatch: pytest.MonkeyPatch, recorder: Recorder, model="deepgram/nova-3", **options: Any):
+    monkeypatch.setenv("OPENROUTER_API_KEY", OPENROUTER_KEY)
+    options.setdefault("upload", "flac")  # the fixture is already a 16 kHz WAV; skip ffmpeg
+    config = _config("openrouter", model, **options)
+    return OpenRouterProvider(config, transport=recorder.transport, sleep=lambda _: None)
+
+
+def test_openrouter_posts_json_with_vendor_diarization_options(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    recorder = Recorder(_queue(httpx.Response(200, json=OPENROUTER_VERBOSE, headers={"x-generation-id": "gen-1"})))
+    provider = _openrouter(monkeypatch, recorder)
+    assert provider.check() == []
+
+    hypothesis = provider.diarize(wav, language="en-US", conversation_id="conv-1")
+
+    assert hypothesis.granularity == "word"
+    assert hypothesis.duration_s == 1.25
+    assert hypothesis.segments == (
+        {"speaker": "0", "start_s": 0.1, "end_s": 0.3, "text": "Hi"},
+        {"speaker": "0", "start_s": 0.35, "end_s": 0.6, "text": "there."},
+        {"speaker": "1", "start_s": 0.7, "end_s": 1.0, "text": "Hello."},
+    )
+    request = recorder.requests[0]
+    assert request.method == "POST"
+    assert str(request.url) == "https://openrouter.ai/api/v1/audio/transcriptions"
+    assert request.headers["authorization"] == f"Bearer {OPENROUTER_KEY}"
+    assert request.headers["content-type"] == "application/json"
+    body = json.loads(request.content)
+    assert body["model"] == "deepgram/nova-3"
+    assert body["response_format"] == "verbose_json"
+    assert body["timestamp_granularities"] == ["segment", "word"]
+    assert body["language"] == "en"
+    assert body["input_audio"]["format"] == "wav"
+    assert base64.b64decode(body["input_audio"]["data"]) == wav.read_bytes()
+    assert body["provider"] == {"options": KNOWN_PROVIDER_OPTIONS}
+    assert body["provider"]["options"]["deepgram"]["diarize"] is True
+    assert body["provider"]["options"]["azure"] == {"diarization": {"enabled": True}}
+    # The audio never lands in the stored request record, the generation id and usage do.
+    assert "input_audio" not in hypothesis.raw["parameters"]
+    assert hypothesis.raw["generation_id"] == "gen-1" and hypothesis.raw["usage"]["cost"] == 0.0001
+    assert OPENROUTER_KEY not in json.dumps(hypothesis.raw)
+
+
+def test_openrouter_provider_options_override_and_segment_fallback(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    body_without_words = {k: v for k, v in OPENROUTER_VERBOSE.items() if k != "words"}
+    recorder = Recorder(_queue(httpx.Response(200, json=body_without_words)))
+    provider = _openrouter(
+        monkeypatch,
+        recorder,
+        model="acme/listen-1",
+        language_hint=False,
+        zdr=True,
+        provider_options={"acme": {"speakers": "auto"}, "deepgram": {}},
+    )
+    assert provider.check() == []
+
+    hypothesis = provider.diarize(wav, language="en-US", conversation_id="conv-1")
+
+    assert hypothesis.granularity == "segment"
+    assert [s["speaker"] for s in hypothesis.segments] == ["0", "1"]
+    body = json.loads(recorder.requests[0].content)
+    assert "language" not in body
+    assert body["provider"]["zdr"] is True
+    options = body["provider"]["options"]
+    assert options["acme"] == {"speakers": "auto"}
+    assert "deepgram" not in options  # an empty table switches a known block off
+    assert options["azure"] == KNOWN_PROVIDER_OPTIONS["azure"]
+
+
+def test_openrouter_check_and_missing_speakers(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    recorder = Recorder(_queue(httpx.Response(200, json={"text": "hi", "segments": [{"start": 0, "end": 1}]})))
+    provider = _openrouter(monkeypatch, recorder)
+    with pytest.raises(ProviderError, match="no speaker labels"):
+        provider.diarize(wav, language="en", conversation_id="conv-1")
+
+    bad = _openrouter(monkeypatch, recorder, model="nova-3", provider_options={"deepgram": True}, zdr="yes")
+    problems = "\n".join(bad.check())
+    assert "OpenRouter id" in problems and "provider_options" in problems and "zdr" in problems
+
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    config = _config("openrouter", "deepgram/nova-3", upload="flac")
+    assert any("OPENROUTER_API_KEY" in problem for problem in OpenRouterProvider(config).check())
 
 
 def test_deepgram_streams_raw_audio_and_parses_words(monkeypatch: pytest.MonkeyPatch, wav: Path):

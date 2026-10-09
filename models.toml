@@ -1,8 +1,55 @@
 # Models the Ocular AI Converse-Diarization harness runs. One table per model.
-# Minimum for an OpenAI-compatible diarizing endpoint: url + key (the NAME of the variable in .env).
-# Optional: model (defaults to the table name), vendor, display_name, href, notes, provider
-# (openai-compatible | deepgram | assemblyai | elevenlabs | pyannote | rttm) and provider options.
-# Add one from the shell: converse-diarization models add <name> --url <base url> --key <secret or ENV>
+#
+# Two ways to reach a hosted model; mix them freely:
+#   via OpenRouter  provider = "openrouter", model = "<vendor>/<id>", one OPENROUTER_API_KEY for all of them.
+#                   The vendor's own diarization switch is sent for you (deepgram, azure, elevenlabs,
+#                   assemblyai); other vendors need `provider_options = { <slug> = { ... } }`.
+#   direct          url + key (the NAME of the variable in .env) against the vendor's own API.
+# Optional everywhere: model (defaults to the table name), vendor, display_name, href, notes, provider
+# (openai-compatible | openrouter | deepgram | assemblyai | elevenlabs | pyannote | rttm), options.
+#
+# Shell: converse-diarization models add <name> --openrouter --model <vendor/id>
+#    or: converse-diarization models add <name> --url <base url> --key <secret or ENV>
+
+# ---- via OpenRouter -------------------------------------------------------------------
+
+[deepgram-nova-3]
+provider = "openrouter"
+model = "deepgram/nova-3"
+key = "OPENROUTER_API_KEY"
+vendor = "Deepgram"
+display_name = "Nova-3"
+href = "https://openrouter.ai/deepgram/nova-3"
+notes = "via OpenRouter"
+
+[elevenlabs-scribe-v2]
+provider = "openrouter"
+model = "elevenlabs/scribe-v2"
+key = "OPENROUTER_API_KEY"
+vendor = "ElevenLabs"
+display_name = "Scribe v2"
+href = "https://openrouter.ai/elevenlabs/scribe-v2"
+notes = "via OpenRouter"
+
+[assemblyai-universal-3-5-pro]
+provider = "openrouter"
+model = "assemblyai/universal-3-5-pro"
+key = "OPENROUTER_API_KEY"
+vendor = "AssemblyAI"
+display_name = "Universal 3.5 Pro"
+href = "https://openrouter.ai/assemblyai/universal-3-5-pro"
+notes = "via OpenRouter"
+
+[mai-transcribe-2]
+provider = "openrouter"
+model = "microsoft/mai-transcribe-2"
+key = "OPENROUTER_API_KEY"
+vendor = "Microsoft"
+display_name = "MAI Transcribe 2"
+href = "https://openrouter.ai/microsoft/mai-transcribe-2"
+notes = "via OpenRouter"
+
+# ---- direct ----------------------------------------------------------------------------
 
 [gpt-4o-transcribe-diarize]
 url = "https://api.openai.com/v1"
@@ -16,23 +63,25 @@ response_format = "diarized_json"
 chunking_strategy = "auto"
 upload = "mp3"
 
-[deepgram-nova-3]
+[deepgram-nova-3-direct]
 url = "https://api.deepgram.com/v1"
 key = "DEEPGRAM_API_KEY"
 provider = "deepgram"
 model = "nova-3"
 vendor = "Deepgram"
-display_name = "Nova-3"
+display_name = "Nova-3 (direct)"
 href = "https://developers.deepgram.com/docs/diarization"
 
-[elevenlabs-scribe-v2]
+[elevenlabs-scribe-v2-direct]
 url = "https://api.elevenlabs.io/v1"
 key = "ELEVENLABS_API_KEY"
 provider = "elevenlabs"
 model = "scribe_v2"
 vendor = "ElevenLabs"
-display_name = "Scribe v2"
+display_name = "Scribe v2 (direct)"
 href = "https://elevenlabs.io/docs/capabilities/speech-to-text"
+
+# ---- local -----------------------------------------------------------------------------
 
 [pyannote-community-1]
 provider = "pyannote"

@@ -88,6 +88,13 @@ def _entry_to_config_dict(name: str, entry: dict[str, Any], *, source: str) -> d
     return data
 
 
+_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _toml_key(key: str) -> str:
+    return key if _BARE_KEY.match(key) else _toml_scalar(key)
+
+
 def _toml_scalar(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -95,6 +102,9 @@ def _toml_scalar(value: Any) -> str:
         return repr(value)
     if isinstance(value, list):
         return "[" + ", ".join(_toml_scalar(item) for item in value) + "]"
+    if isinstance(value, dict):  # inline table, e.g. provider_options = { deepgram = { diarize = true } }
+        items = ", ".join(f"{_toml_key(key)} = {_toml_scalar(item)}" for key, item in value.items())
+        return "{ " + items + " }" if items else "{}"
     text = str(value).replace("\\", "\\\\").replace('"', '\\"')
     return f'"{text}"'
 
@@ -221,10 +231,12 @@ class Registry:
     def render(self) -> str:
         header = (
             "# Models the Ocular AI Converse-Diarization harness runs. One table per model.\n"
-            "# Minimum for an OpenAI-compatible diarizing endpoint: url + key (the NAME of the variable in .env).\n"
+            '# Through OpenRouter: provider = "openrouter", model = "<vendor>/<id>", key = "OPENROUTER_API_KEY".\n'
+            "# Direct: url + key (the NAME of the variable in .env) for an OpenAI-compatible diarizing endpoint.\n"
             "# Optional: model (defaults to the table name), vendor, display_name, href, notes, provider\n"
-            "# (openai-compatible | deepgram | assemblyai | elevenlabs | pyannote | rttm) and provider options.\n"
-            "# Add one from the shell: converse-diarization models add <name> --url <base url> --key <secret or ENV>\n"
+            "# (openai-compatible | openrouter | deepgram | assemblyai | elevenlabs | pyannote | rttm), options.\n"
+            "# Shell: converse-diarization models add <name> --openrouter --model <vendor/id>\n"
+            "#    or: converse-diarization models add <name> --url <base url> --key <secret or ENV>\n"
         )
         blocks = [header] + [self._render_entry(name, entry) for name, entry in self.entries.items()]
         return "\n".join(blocks)

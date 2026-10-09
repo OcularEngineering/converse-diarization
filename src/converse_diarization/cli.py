@@ -23,9 +23,10 @@ from converse_diarization.registry import (
 DEFAULT_DATASET = Path("data/converse-en-sample")
 DEFAULT_RUNS = Path("runs")
 DEFAULT_REPORT = Path("reports/converse-diarization.html")
-PROVIDER_CHOICES = ("openai-compatible", "deepgram", "assemblyai", "elevenlabs", "pyannote", "rttm")
+PROVIDER_CHOICES = ("openai-compatible", "openrouter", "deepgram", "assemblyai", "elevenlabs", "pyannote", "rttm")
 URL_PROVIDERS = {"openai-compatible", "deepgram", "assemblyai", "elevenlabs"}
 KEYLESS_PROVIDERS = {"pyannote", "rttm"}
+OPENROUTER_PROVIDER = "openrouter"
 
 
 def _fail(message: str) -> int:
@@ -166,6 +167,12 @@ def _parse_options(items: list[str] | None) -> dict:
         if lowered in {"true", "false"}:
             options[key] = lowered == "true"
             continue
+        if raw[:1] in "{[":  # nested value as JSON, e.g. provider_options={"deepgram": {"diarize": true}}
+            try:
+                options[key] = json.loads(raw)
+            except ValueError as exc:
+                raise ConfigError(f"--option {key}: value looks like JSON but does not parse: {exc}") from None
+            continue
         try:
             options[key] = int(raw)
             continue
@@ -182,13 +189,28 @@ def _parse_options(items: list[str] | None) -> dict:
 
 def cmd_models_add(args: argparse.Namespace) -> int:
     from converse_diarization.providers import PROVIDERS, create_provider
+    from converse_diarization.providers.openrouter import DEFAULT_API_KEY_ENV as OPENROUTER_KEY_ENV
 
     registry = Registry.load(args.models_file)
     provider_key = args.provider or DEFAULT_PROVIDER
+    if args.openrouter:
+        if args.provider not in (None, OPENROUTER_PROVIDER):
+            return _fail("--openrouter and --provider are mutually exclusive; the openrouter provider is implied")
+        if args.url:
+            return _fail("--openrouter and --url are mutually exclusive; OpenRouter's URL is implied")
+        if not args.model or "/" not in args.model:
+            return _fail("--openrouter needs the OpenRouter model id via --model, e.g. --model deepgram/nova-3")
+        provider_key = OPENROUTER_PROVIDER
+        args.key = args.key or OPENROUTER_KEY_ENV
+        args.notes = args.notes or "via OpenRouter"
+        args.href = args.href or f"https://openrouter.ai/{args.model}"
     if provider_key not in PROVIDERS:
         return _fail(f"unknown provider {provider_key!r}; available: {', '.join(sorted(PROVIDERS))}")
     if provider_key in URL_PROVIDERS and not args.url:
-        return _fail("--url is required: the base URL of the API, for example https://api.vendor.com/v1")
+        return _fail(
+            "--url is required: the base URL of the API, for example https://api.vendor.com/v1 "
+            "(or pass --openrouter --model <vendor/model> to route through OpenRouter)"
+        )
 
     key_env: str | None = None
     secret: str | None = None
@@ -478,6 +500,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add.add_argument("name", help="short id, e.g. gpt-4o-transcribe-diarize (also the default model id and run dir)")
     add.add_argument("--url", help="API base URL, e.g. https://api.vendor.com/v1")
+    add.add_argument(
+        "--openrouter",
+        action="store_true",
+        help="route through OpenRouter (https://openrouter.ai/api/v1) with --model <vendor/model>; the key "
+        "defaults to OPENROUTER_API_KEY and the serving vendor's diarization option is sent for you",
+    )
     add.add_argument("--key", help="the API key, or the NAME of the .env variable holding it, or '-' for stdin")
     add.add_argument("--key-env", help="variable name to store a literal --key under (default: <VENDOR>_API_KEY)")
     add.add_argument("--model", help="model id sent to the API when it differs from the name")
