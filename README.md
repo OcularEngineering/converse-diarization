@@ -44,12 +44,12 @@ collection that Ocular AI licenses.
 cd "Converse Diarization"
 uv sync --group dev                 # hosted providers only
 uv sync --group dev --extra local   # also installs pyannote.audio + torch for local models
-cp .env.example .env                # add HF_TOKEN and the provider keys you need, e.g. OPENAI_API_KEY
+cp .env.example .env                # add HF_TOKEN and OPENROUTER_API_KEY (plus any direct vendor keys you use)
 
 uv run converse-diarization dataset pull        # Ocular AI English sample from Hugging Face -> data/converse-en-sample
 uv run converse-diarization dataset show        # conversations, speaker time, overlap share
 uv run converse-diarization check               # credentials + dependencies for every model in models.toml
-uv run converse-diarization run --model gpt-4o-transcribe-diarize   # mix + diarize + score -> runs/gpt-4o-transcribe-diarize
+uv run converse-diarization run --model deepgram-nova-3   # mix + diarize + score -> runs/deepgram-nova-3
 uv run converse-diarization report              # every scored run in runs/ -> reports/converse-diarization.html
 open reports/converse-diarization.html
 ```
@@ -58,9 +58,41 @@ open reports/converse-diarization.html
 
 ## Adding a model
 
-Models live in `models.toml` at the project root. For any API that returns speaker-labelled segments from
-the OpenAI `POST /audio/transcriptions` protocol (OpenAI's `diarized_json`, or a compatible server), a model
-is a URL and a key:
+Models live in `models.toml` at the project root. There are two ways to reach a hosted model; both end up as
+the same kind of entry, and you can mix them freely.
+
+### Through OpenRouter (one key, many models)
+
+[OpenRouter](https://openrouter.ai/docs/guides/overview/multimodal/stt) fronts a catalog of speech-to-text
+vendors behind one `/audio/transcriptions` endpoint and one key. Diarization is not a normalised parameter
+there: each vendor is switched on through its own option (Deepgram `diarize`, Azure `diarization.enabled`,
+ElevenLabs `diarize`, AssemblyAI `speaker_labels`), which the `openrouter` provider sends for you. The entries
+in `models.toml` marked `via OpenRouter` need nothing more than `OPENROUTER_API_KEY` in `.env`. To add another
+model from the catalog, pass its OpenRouter id:
+
+```bash
+uv run converse-diarization models add <model-name> --openrouter --model <vendor>/<model-id> --vendor <Vendor>
+uv run converse-diarization run --model <model-name>
+```
+
+For a vendor whose diarization switch the harness does not know yet, give it under its OpenRouter endpoint
+slug (the `tag` in `GET https://openrouter.ai/api/v1/models/<vendor>/<model-id>/endpoints`):
+
+```bash
+uv run converse-diarization models add <model-name> --openrouter --model <vendor>/<model-id> \
+    --option 'provider_options={"<slug>": {"<diarization option>": true}}'
+```
+
+Two caveats come with the proxy. OpenRouter times out upstream requests after about a minute of processing,
+so slow vendors can fail on the 15-minute conversations (failures land in `runs/<name>/failures.jsonl` and
+are resumable), and the route adds a hop to latency, so every routed entry carries `notes = "via OpenRouter"`
+and the leaderboard can say so. A vendor that returns no speaker labels through OpenRouter is reported as
+such rather than scored.
+
+### Directly, with the vendor's URL and key
+
+For any API that returns speaker-labelled segments from the OpenAI `POST /audio/transcriptions` protocol
+(OpenAI's `diarized_json`, or a compatible server), a model is a URL and a key:
 
 ```bash
 uv run converse-diarization models add <model-name> --url https://api.<provider>.com/v1 --key <your-api-key>
@@ -83,16 +115,25 @@ shell history. Useful extras: `--model <api-model-id>` when the id the API expec
 `--vendor` and `--display-name` for the leaderboard, `--provider` for APIs with their own protocol
 (`deepgram`, `assemblyai`, `elevenlabs`), `--provider pyannote` for a local pyannote pipeline, and
 `--provider rttm --dir <folder>` to score RTTM files produced anywhere else (a GPU box, another toolkit),
-`--option key=value` for anything else.
+`--option key=value` for anything else (JSON values such as `{"a": 1}` become nested tables). To run the same
+model both ways, give the direct entry its own name, as `models.toml` does with `deepgram-nova-3` and
+`deepgram-nova-3-direct`.
 
 Editing the file by hand is equally fine:
 
 ```toml
-[<model-name>]
+[<model-name>]                           # direct
 url = "https://api.<provider>.com/v1"    # base URL
 key = "<PROVIDER>_API_KEY"               # NAME of the variable in .env
 model = "<api-model-id>"                 # optional, defaults to the table name
 vendor = "<Provider>"                    # optional, leaderboard label
+
+[<model-name>-openrouter]                # the same model through OpenRouter
+provider = "openrouter"
+model = "<vendor>/<model-id>"
+key = "OPENROUTER_API_KEY"
+vendor = "<Provider>"
+notes = "via OpenRouter"
 ```
 
 `converse-diarization models` lists everything, `models show <name>` prints the resolved config,
@@ -145,7 +186,7 @@ with `--model path/to/file.toml`:
 name = "gpt-4o-transcribe-diarize"
 display_name = "GPT-4o Transcribe Diarize"
 vendor = "OpenAI"
-provider = "openai-compatible"   # openai-compatible | deepgram | assemblyai | elevenlabs | pyannote | rttm
+provider = "openai-compatible"   # openai-compatible | openrouter | deepgram | assemblyai | elevenlabs | pyannote | rttm
 model = "gpt-4o-transcribe-diarize"
 env = ["OPENAI_API_KEY"]
 href = "https://platform.openai.com/docs/guides/speech-to-text"
@@ -159,6 +200,7 @@ upload = "mp3"                   # 25 MB upload cap
 | provider            | what it calls                                                           | output scored as |
 | ------------------- | ----------------------------------------------------------------------- | ---------------- |
 | `openai-compatible` | `POST {base_url}/audio/transcriptions` with a diarizing response format | segments (or words when that is all the API labels) |
+| `openrouter`        | `POST https://openrouter.ai/api/v1/audio/transcriptions` (JSON, `verbose_json`) with the serving vendor's diarization option under `provider.options` | words, merged with the 0.2 s rule (segments as fallback) |
 | `deepgram`          | `POST {base_url}/listen?diarize=true&utterances=true`                   | words, merged with the 0.2 s rule |
 | `assemblyai`        | upload, create transcript with `speaker_labels`, poll                   | words, merged with the 0.2 s rule |
 | `elevenlabs`        | `POST {base_url}/speech-to-text` with `diarize=true`                    | words, merged with the 0.2 s rule |
@@ -178,7 +220,7 @@ src/converse_diarization/
   metrics.py      exact-interval DER / JER / speaker count, overlap share, RTTM
   config.py       model TOML loading
   registry.py     models.toml parsing / `models add`
-  providers/      openai_compatible, deepgram, assemblyai, elevenlabs, pyannote, rttm (+ retrying HTTP, audio prep)
+  providers/      openai_compatible, openrouter, deepgram, assemblyai, elevenlabs, pyannote, rttm (+ retrying HTTP, audio prep)
   runner.py       resumable diarization + scoring of a run directory
   report.py       leaderboard HTML
   models/         built-in model configs
