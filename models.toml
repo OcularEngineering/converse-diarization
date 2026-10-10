@@ -93,3 +93,15 @@ href = "https://huggingface.co/pyannote/speaker-diarization-community-1"
 
 [pyannote-community-1.options]
 device = "auto"
+
+[gemini-3-5-transcribe]
+key = "OPENROUTER_API_KEY"
+model = "google/gemini-3.5-transcribe"
+provider = "openrouter"
+vendor = "Google"
+display_name = "Gemini 3.5 Transcribe"
+href = "https://openrouter.ai/google/gemini-3.5-transcribe"
+notes = "via OpenRouter"
+
+[gemini-3-5-transcribe.options]
+provider_options = { google-ai-studio = { diarization_mode = "speaker" } }
