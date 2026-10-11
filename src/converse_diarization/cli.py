@@ -23,9 +23,21 @@ from converse_diarization.registry import (
 DEFAULT_DATASET = Path("data/converse-en-sample")
 DEFAULT_RUNS = Path("runs")
 DEFAULT_REPORT = Path("reports/converse-diarization.html")
-PROVIDER_CHOICES = ("openai-compatible", "openrouter", "deepgram", "assemblyai", "elevenlabs", "pyannote", "rttm")
-URL_PROVIDERS = {"openai-compatible", "deepgram", "assemblyai", "elevenlabs"}
-KEYLESS_PROVIDERS = {"pyannote", "rttm"}
+PROVIDER_CHOICES = (
+    "openai-compatible",
+    "openrouter",
+    "deepgram",
+    "diarizen",
+    "assemblyai",
+    "azure",
+    "elevenlabs",
+    "meta",
+    "xai",
+    "pyannote",
+    "rttm",
+)
+URL_PROVIDERS = {"openai-compatible", "deepgram", "assemblyai", "elevenlabs", "meta", "xai"}
+KEYLESS_PROVIDERS = {"pyannote", "rttm", "diarizen"}
 OPENROUTER_PROVIDER = "openrouter"
 
 

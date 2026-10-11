@@ -16,12 +16,16 @@ import soundfile as sf
 from converse_diarization.config import ConfigError, ModelConfig
 from converse_diarization.providers import PROVIDERS, Hypothesis, ProviderError, create_provider
 from converse_diarization.providers.assemblyai import AssemblyAIProvider
+from converse_diarization.providers.azure import AzureProvider, speech_base_url
 from converse_diarization.providers.deepgram import DeepgramProvider
+from converse_diarization.providers.diarizen import DiariZenProvider, segments_from_payload
 from converse_diarization.providers.elevenlabs import ElevenLabsProvider
+from converse_diarization.providers.meta import MetaProvider, link_speakers
 from converse_diarization.providers.openai_compatible import OpenAICompatibleProvider
 from converse_diarization.providers.openrouter import KNOWN_PROVIDER_OPTIONS, OpenRouterProvider
 from converse_diarization.providers.pyannote import PyannoteProvider
 from converse_diarization.providers.rttm import RttmProvider, parse_rttm
+from converse_diarization.providers.xai import XAIProvider
 
 # --- helpers -------------------------------------------------------------------
 
@@ -94,8 +98,12 @@ def test_registry_exposes_every_provider():
         "openai-compatible",
         "openrouter",
         "deepgram",
+        "diarizen",
         "assemblyai",
+        "azure",
         "elevenlabs",
+        "meta",
+        "xai",
         "pyannote",
         "rttm",
     }
@@ -665,6 +673,165 @@ def test_elevenlabs_language_hint_off_and_missing_speakers(monkeypatch: pytest.M
     assert "language_code" not in _multipart(recorder.requests[0])[0]
 
 
+# --- xAI ------------------------------------------------------------------------
+
+XAI_KEY = "xai-testtesttesttesttesttest"
+
+
+def test_xai_posts_multipart_and_keeps_labelled_words(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("XAI_API_KEY", XAI_KEY)
+    body = {
+        "text": "Hi there",
+        "language": "en",
+        "duration": 1.4,
+        "words": [
+            {"text": "Hi", "start": 0.0, "end": 0.2, "speaker": 0},
+            {"text": "there", "start": 0.3, "end": 0.6, "speaker": 1},
+            {"text": "   ", "start": 0.7, "end": 0.8, "speaker": 1},
+        ],
+    }
+    recorder = Recorder(_queue(httpx.Response(200, json=body, headers={"x-request-id": "xai-1"})))
+    provider = XAIProvider(_config("xai", "grok-voice-transcribe-2.0"), transport=recorder.transport)
+
+    hypothesis = provider.diarize(wav, language="en-US", conversation_id="conv-1")
+
+    assert hypothesis.granularity == "word"
+    assert hypothesis.duration_s == pytest.approx(1.4)
+    assert hypothesis.segments == (
+        {"speaker": "0", "start_s": 0.0, "end_s": 0.2, "text": "Hi"},
+        {"speaker": "1", "start_s": 0.3, "end_s": 0.6, "text": "there"},
+        {"speaker": "1", "start_s": 0.7, "end_s": 0.8, "text": None},
+    )
+    request = recorder.requests[0]
+    assert str(request.url) == "https://api.x.ai/v1/stt"
+    assert request.headers["authorization"] == f"Bearer {XAI_KEY}"
+    fields, files = _multipart(request)
+    assert fields == {
+        "model": ["grok-voice-transcribe-2.0"],
+        "diarize": ["true"],
+        "format": ["false"],
+        "filler_words": ["true"],
+        "vad_threshold": ["0.5"],
+        "language": ["en"],
+    }
+    assert files["file"][0] == "mix.wav" and files["file"][1] == "audio/wav" and files["file"][2] == wav.read_bytes()
+    assert hypothesis.raw["request_id"] == "xai-1"
+    assert XAI_KEY not in json.dumps(hypothesis.raw)
+
+
+def test_xai_language_hint_off_and_missing_speakers(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("XAI_API_KEY", XAI_KEY)
+    body = {"text": "hi", "words": [{"text": "hi", "start": 0.0, "end": 0.2}]}
+    recorder = Recorder(_queue(httpx.Response(200, json=body)))
+    provider = XAIProvider(_config("xai", "grok-voice-transcribe-2.0", language_hint=False), transport=recorder.transport)
+
+    with pytest.raises(ProviderError, match="speaker-labelled words"):
+        provider.diarize(wav, language="en", conversation_id="conv-2")
+    assert "language" not in _multipart(recorder.requests[0])[0]
+
+
+def test_xai_check(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    problems = XAIProvider(_config("xai", "grok-voice-transcribe-2.0", upload="ogg", vad_threshold=2, nope=1)).check()
+    assert any("XAI_API_KEY" in item for item in problems)
+    assert any("upload must be" in item for item in problems)
+    assert any("vad_threshold" in item for item in problems)
+    assert any("nope" in item for item in problems)
+    monkeypatch.setenv("XAI_API_KEY", XAI_KEY)
+    assert XAIProvider(_config("xai", "grok-voice-transcribe-2.0")).check() == []
+
+
+# --- Meta -----------------------------------------------------------------------
+
+META_KEY = "meta-testtesttesttesttesttest"
+
+
+def test_meta_posts_diarization_and_keeps_turns(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("META_API_KEY", META_KEY)
+    body = {
+        "transcript": "Hi there",
+        "audioDurationMs": 500,
+        "turns": [
+            {"turnId": 0, "startMs": 0, "endMs": 200, "transcript": "Hi", "speaker": "A"},
+            {"turnId": 1, "startMs": 250, "endMs": 500, "transcript": "there", "speaker": "B"},
+        ],
+    }
+    recorder = Recorder(_queue(httpx.Response(200, json=body)))
+    provider = MetaProvider(_config("meta", "muse-voice-transcribe-1.0"), transport=recorder.transport)
+
+    hypothesis = provider.diarize(wav, language="en-US", conversation_id="conv-1")
+
+    assert hypothesis.granularity == "segment"
+    assert hypothesis.duration_s == pytest.approx(0.5)
+    assert hypothesis.segments == (
+        {"speaker": "A", "start_s": 0.0, "end_s": 0.2, "text": "Hi"},
+        {"speaker": "B", "start_s": 0.25, "end_s": 0.5, "text": "there"},
+    )
+    request = recorder.requests[0]
+    assert str(request.url) == "https://api.meta.ai/v1/asr/transcribe"
+    assert request.headers["authorization"] == f"Bearer {META_KEY}"
+    _fields, files = _multipart(request)
+    payload = json.loads(files["request"][2])
+    assert payload == {
+        "model": "muse-voice-transcribe-1.0",
+        "audioEncoding": "WAV",
+        "mode": "DIARIZATION",
+        "languageBias": ["English"],
+    }
+    assert files["audio"][1] == "audio/wav"
+    assert META_KEY not in json.dumps(hypothesis.raw)
+
+
+def test_meta_links_speakers_across_the_overlap(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("META_API_KEY", META_KEY)
+    first = {"turns": [{"turnId": 0, "startMs": 0, "endMs": 300, "transcript": "one", "speaker": "A"}]}
+    second = {"turns": [{"turnId": 0, "startMs": 0, "endMs": 300, "transcript": "two", "speaker": "B"}]}
+    recorder = Recorder(_queue(httpx.Response(200, json=first), httpx.Response(200, json=second)))
+    provider = MetaProvider(
+        _config("meta", "muse-voice-transcribe-1.0", window_s=0.3, overlap_s=0.1, max_clip_s=0.4),
+        transport=recorder.transport,
+    )
+
+    hypothesis = provider.diarize(wav, language="en", conversation_id="conv-2")
+
+    assert len(recorder.requests) == 2
+    assert hypothesis.segments == (
+        {"speaker": "A", "start_s": 0.0, "end_s": 0.3, "text": "one"},
+        {"speaker": "A", "start_s": 0.3, "end_s": 0.5, "text": "two"},
+    )
+
+
+def test_meta_language_hint_off_and_missing_speakers(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("META_API_KEY", META_KEY)
+    recorder = Recorder(_queue(httpx.Response(200, json={"turns": [{"startMs": 0, "endMs": 200, "transcript": "hi"}]})))
+    provider = MetaProvider(
+        _config("meta", "muse-voice-transcribe-1.0", language_hint=False), transport=recorder.transport
+    )
+
+    with pytest.raises(ProviderError, match="speaker-labelled turns"):
+        provider.diarize(wav, language="en", conversation_id="conv-3")
+    payload = json.loads(_multipart(recorder.requests[0])[1]["request"][2])
+    assert "languageBias" not in payload
+
+
+def test_meta_check(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("META_API_KEY", raising=False)
+    problems = MetaProvider(_config("meta", "muse-voice-transcribe-1.0", overlap_s=700, nope=1)).check()
+    assert any("META_API_KEY" in item for item in problems)
+    assert any("overlap_s" in item for item in problems)
+    assert any("nope" in item for item in problems)
+    monkeypatch.setenv("META_API_KEY", META_KEY)
+    assert MetaProvider(_config("meta", "muse-voice-transcribe-1.0")).check() == []
+
+
+def test_link_speakers_keeps_a_new_voice_when_the_overlap_is_silent():
+    base = [{"speaker": "A", "start_s": 0.0, "end_s": 0.2, "text": "hi"}]
+    extra = [{"speaker": "A", "start_s": 0.5, "end_s": 0.8, "text": "later"}]
+    linked = link_speakers(base, extra, overlap_start_s=0.3, overlap_end_s=0.4)
+    assert linked[-1]["speaker"] == "A-2"
+    assert linked[-1]["start_s"] == pytest.approx(0.5)
+
+
 def test_elevenlabs_check(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
     problems = ElevenLabsProvider(_config("elevenlabs", "scribe_v1", upload="ogg", nope=1)).check()
@@ -834,3 +1001,141 @@ def test_pyannote_diarize_with_fake_pipeline(monkeypatch: pytest.MonkeyPatch, wa
     # pyannote.audio 3.x returns the Annotation directly.
     Pipeline.__call__ = lambda self, path, **kwargs: Annotation()  # type: ignore[method-assign]
     assert provider.diarize(wav, language="en", conversation_id="conv-3").speakers == ("SPEAKER_00", "SPEAKER_01")
+
+
+# --- Azure Speech --------------------------------------------------------------
+
+AZURE_KEY = "azure-testtesttesttesttesttest"
+
+
+def test_speech_base_url_drops_a_foundry_project_path():
+    assert (
+        speech_base_url("https://example.services.ai.azure.com/api/projects/converse-benchmark")
+        == "https://example.services.ai.azure.com"
+    )
+    assert speech_base_url("https://example.cognitiveservices.azure.com/") == "https://example.cognitiveservices.azure.com"
+
+
+def test_azure_posts_enhanced_mode_and_keeps_phrase_speakers_on_words(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("AZURE_FOUNDRY_KEY", AZURE_KEY)
+    monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://example.services.ai.azure.com/api/projects/demo")
+    body = {
+        "durationMilliseconds": 1400,
+        "phrases": [
+            {
+                "speaker": 0,
+                "offsetMilliseconds": 0,
+                "durationMilliseconds": 600,
+                "text": "Hi there",
+                "words": [
+                    {"text": "Hi", "offsetMilliseconds": 0, "durationMilliseconds": 200},
+                    {"text": "there", "offsetMilliseconds": 300, "durationMilliseconds": 300},
+                ],
+            },
+            {
+                "speaker": 1,
+                "offsetMilliseconds": 800,
+                "durationMilliseconds": 400,
+                "text": "yes",
+                "words": [{"text": "yes", "offsetMilliseconds": 800, "durationMilliseconds": 400}],
+            },
+        ],
+    }
+    recorder = Recorder(_queue(httpx.Response(200, json=body, headers={"apim-request-id": "azure-1"})))
+    provider = AzureProvider(_config("azure", "mai-transcribe-2"), transport=recorder.transport)
+
+    hypothesis = provider.diarize(wav, language="en-US", conversation_id="conv-1")
+
+    assert hypothesis.granularity == "word"
+    assert hypothesis.duration_s == pytest.approx(1.4)
+    assert hypothesis.segments == (
+        {"speaker": "0", "start_s": 0.0, "end_s": 0.2, "text": "Hi"},
+        {"speaker": "0", "start_s": 0.3, "end_s": 0.6, "text": "there"},
+        {"speaker": "1", "start_s": 0.8, "end_s": 1.2, "text": "yes"},
+    )
+    request = recorder.requests[0]
+    assert str(request.url) == (
+        "https://example.services.ai.azure.com/speechtotext/transcriptions:transcribe?api-version=2025-10-15"
+    )
+    assert request.headers["ocp-apim-subscription-key"] == AZURE_KEY
+    fields, files = _multipart(request)
+    assert json.loads(fields["definition"][0]) == {
+        "locales": ["en"],
+        "diarization": {"enabled": True},
+        "enhancedMode": {
+            "enabled": True,
+            "model": "mai-transcribe-2",
+            "modelOptions": {"timestamps": "word", "transcribeStyle": "verbatim"},
+        },
+    }
+    assert files["audio"][0] == "mix.wav" and files["audio"][1] == "audio/wav"
+    assert hypothesis.raw["request_id"] == "azure-1"
+    assert AZURE_KEY not in json.dumps(hypothesis.raw)
+
+
+def test_azure_scores_phrases_when_words_are_absent(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("AZURE_FOUNDRY_KEY", AZURE_KEY)
+    monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://example.cognitiveservices.azure.com")
+    body = {
+        "durationMilliseconds": 1000,
+        "phrases": [
+            {"speaker": 0, "offsetMilliseconds": 0, "durationMilliseconds": 400, "text": "Hi"},
+            {"speaker": 1, "offsetMilliseconds": 500, "durationMilliseconds": 500, "text": "there"},
+        ],
+    }
+    recorder = Recorder(_queue(httpx.Response(200, json=body)))
+    provider = AzureProvider(
+        _config("azure", "mai-transcribe-2", language_hint=False), transport=recorder.transport
+    )
+
+    hypothesis = provider.diarize(wav, language="en", conversation_id="conv-2")
+
+    assert hypothesis.granularity == "segment"
+    assert [segment["speaker"] for segment in hypothesis.segments] == ["0", "1"]
+    assert "locales" not in json.loads(_multipart(recorder.requests[0])[0]["definition"][0])
+
+
+def test_azure_missing_speakers_and_check(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("AZURE_FOUNDRY_KEY", AZURE_KEY)
+    monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://example.cognitiveservices.azure.com")
+    body = {"phrases": [{"offsetMilliseconds": 0, "durationMilliseconds": 200, "text": "hi"}]}
+    recorder = Recorder(_queue(httpx.Response(200, json=body)))
+    provider = AzureProvider(_config("azure", "mai-transcribe-2"), transport=recorder.transport)
+    with pytest.raises(ProviderError, match="speaker-labelled phrases"):
+        provider.diarize(wav, language="en", conversation_id="conv-3")
+
+    monkeypatch.delenv("AZURE_FOUNDRY_KEY", raising=False)
+    monkeypatch.delenv("AZURE_FOUNDRY_ENDPOINT", raising=False)
+    problems = AzureProvider(
+        _config("azure", "mai-transcribe-2", transcribe_style="fancy", nope=1)
+    ).check()
+    assert any("AZURE_FOUNDRY_KEY" in item for item in problems)
+    assert any("AZURE_FOUNDRY_ENDPOINT" in item for item in problems)
+    assert any("transcribe_style" in item for item in problems)
+    assert any("nope" in item for item in problems)
+
+
+def test_diarizen_payload_keeps_labelled_turns():
+    segments = segments_from_payload(
+        {
+            "segments": [
+                {"speaker": "1", "start_s": 0.2, "end_s": 1.0, "text": None},
+                {"speaker": None, "start_s": 0.0, "end_s": 0.1, "text": None},
+            ]
+        }
+    )
+    assert segments == [{"speaker": "1", "start_s": 0.2, "end_s": 1.0, "text": None}]
+    with pytest.raises(ProviderError, match="boom"):
+        segments_from_payload({"error": "boom"})
+
+
+def test_diarizen_check_requires_its_interpreter(tmp_path: Path):
+    missing = tmp_path / "missing-python"
+    problems = DiariZenProvider(
+        _config("diarizen", "BUT-FIT/diarizen-wavlm-large-s80-md-v2", python=str(missing))
+    ).check()
+    assert any("not found" in item for item in problems)
+    problems = DiariZenProvider(
+        _config("diarizen", "BUT-FIT/diarizen-wavlm-large-s80-md-v2", python=str(missing), nope=1)
+    ).check()
+    assert any("nope" in item for item in problems)

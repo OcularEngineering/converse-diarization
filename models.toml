@@ -6,7 +6,7 @@
 #                   assemblyai); other vendors need `provider_options = { <slug> = { ... } }`.
 #   direct          url + key (the NAME of the variable in .env) against the vendor's own API.
 # Optional everywhere: model (defaults to the table name), vendor, display_name, href, notes, provider
-# (openai-compatible | openrouter | deepgram | assemblyai | elevenlabs | pyannote | rttm), options.
+# (openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | xai | pyannote | rttm), options.
 #
 # Shell: converse-diarization models add <name> --openrouter --model <vendor/id>
 #    or: converse-diarization models add <name> --url <base url> --key <secret or ENV>
@@ -38,15 +38,6 @@ key = "OPENROUTER_API_KEY"
 vendor = "AssemblyAI"
 display_name = "Universal 3.5 Pro"
 href = "https://openrouter.ai/assemblyai/universal-3-5-pro"
-notes = "via OpenRouter"
-
-[mai-transcribe-2]
-provider = "openrouter"
-model = "microsoft/mai-transcribe-2"
-key = "OPENROUTER_API_KEY"
-vendor = "Microsoft"
-display_name = "MAI Transcribe 2"
-href = "https://openrouter.ai/microsoft/mai-transcribe-2"
 notes = "via OpenRouter"
 
 # ---- direct ----------------------------------------------------------------------------
@@ -105,3 +96,75 @@ notes = "via OpenRouter"
 
 [gemini-3-5-transcribe.options]
 provider_options = { google-ai-studio = { diarization_mode = "speaker" } }
+
+[grok-stt-1-0]
+key = "OPENROUTER_API_KEY"
+model = "x-ai/grok-stt-1.0"
+provider = "openrouter"
+vendor = "xAI"
+display_name = "Grok STT 1.0"
+href = "https://openrouter.ai/x-ai/grok-stt-1.0"
+notes = "via OpenRouter"
+
+[grok-stt-1-0.options]
+provider_options = { xai = { diarize = true } }
+
+[grok-voice-transcribe-2-0]
+url = "https://api.x.ai/v1"
+key = "XAI_API_KEY"
+provider = "xai"
+model = "grok-voice-transcribe-2.0"
+vendor = "xAI"
+display_name = "Grok Voice Transcribe 2.0"
+href = "https://docs.x.ai/developers/models/grok-voice-transcribe-2.0"
+notes = "Word-level speaker labels (diarize = true); same-speaker words up to 0.2 s apart are merged before scoring."
+
+[muse-voice-transcribe-1-0]
+url = "https://api.meta.ai/v1"
+key = "META_API_KEY"
+provider = "meta"
+model = "muse-voice-transcribe-1.0"
+vendor = "Meta"
+display_name = "Muse Voice Transcribe 1.0"
+href = "https://dev.meta.ai/docs/speech-to-text"
+notes = "Turn-level speakers (mode = DIARIZATION). Mixes are split into 3-minute windows with 30 s of overlap; speakers are linked by who is speaking in that overlap."
+
+[voxtral-mini-transcribe-2]
+url = "https://api.mistral.ai/v1"
+key = "MISTRAL_API_KEY"
+provider = "openai-compatible"
+model = "voxtral-mini-2602"
+vendor = "Mistral"
+display_name = "Voxtral Mini Transcribe 2"
+href = "https://docs.mistral.ai/models/voxtral-mini-transcribe-26-02"
+notes = "Segment-level speaker labels (diarize = true). Scored as turns, with no word merge."
+
+[voxtral-mini-transcribe-2.options]
+diarize = true
+timestamp_granularities = ["segment"]
+response_format = "verbose_json"
+chunking_strategy = ""
+language_hint = false
+
+[mai-transcribe-2-direct]
+key = "AZURE_FOUNDRY_KEY"
+provider = "azure"
+model = "mai-transcribe-2"
+vendor = "Microsoft"
+display_name = "MAI Transcribe 2 (direct)"
+href = "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe"
+notes = "Azure Speech fast transcription. Word timestamps inherit the phrase speaker and are merged with the 0.2 s rule. The endpoint is AZURE_FOUNDRY_ENDPOINT; a Foundry project path is ignored."
+
+[mai-transcribe-2-direct.options]
+endpoint_env = "AZURE_FOUNDRY_ENDPOINT"
+
+[diarizen-wavlm-large-s80-md-v2]
+provider = "diarizen"
+model = "BUT-FIT/diarizen-wavlm-large-s80-md-v2"
+vendor = "BUT"
+display_name = "DiariZen WavLM Large s80 MD v2"
+href = "https://huggingface.co/BUT-FIT/diarizen-wavlm-large-s80-md-v2"
+notes = "Local DiariZen pipeline. Overlapping turns are kept and scored as segments. Inference uses .cache/diarizen-venv because DiariZen vendors pyannote 3.1."
+
+[diarizen-wavlm-large-s80-md-v2.options]
+python = ".cache/diarizen-venv/bin/python"
