@@ -113,7 +113,7 @@ uv run converse-diarization models add gpt-4o-transcribe-diarize --url https://a
 that already holds it (`--key OPENAI_API_KEY`). Use `--key -` to paste the secret on stdin and keep it out of
 shell history. Useful extras: `--model <api-model-id>` when the id the API expects differs from the name,
 `--vendor` and `--display-name` for the leaderboard, `--provider` for APIs with their own protocol
-(`deepgram`, `assemblyai`, `elevenlabs`), `--provider pyannote` for a local pyannote pipeline, and
+(`deepgram`, `assemblyai`, `azure`, `elevenlabs`, `meta`, `xai`), `--provider pyannote` for a local pyannote pipeline, and
 `--provider rttm --dir <folder>` to score RTTM files produced anywhere else (a GPU box, another toolkit),
 `--option key=value` for anything else (JSON values such as `{"a": 1}` become nested tables). To run the same
 model both ways, give the direct entry its own name, as `models.toml` does with `deepgram-nova-3` and
@@ -186,7 +186,7 @@ with `--model path/to/file.toml`:
 name = "gpt-4o-transcribe-diarize"
 display_name = "GPT-4o Transcribe Diarize"
 vendor = "OpenAI"
-provider = "openai-compatible"   # openai-compatible | openrouter | deepgram | assemblyai | elevenlabs | pyannote | rttm
+provider = "openai-compatible"   # openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | xai | pyannote | rttm
 model = "gpt-4o-transcribe-diarize"
 env = ["OPENAI_API_KEY"]
 href = "https://platform.openai.com/docs/guides/speech-to-text"
@@ -203,8 +203,12 @@ upload = "mp3"                   # 25 MB upload cap
 | `openrouter`        | `POST https://openrouter.ai/api/v1/audio/transcriptions` (JSON, `verbose_json`) with the serving vendor's diarization option under `provider.options` | words, merged with the 0.2 s rule (segments as fallback) |
 | `deepgram`          | `POST {base_url}/listen?diarize=true&utterances=true`                   | words, merged with the 0.2 s rule |
 | `assemblyai`        | upload, create transcript with `speaker_labels`, poll                   | words, merged with the 0.2 s rule |
+| `azure`             | `POST {speech host}/speechtotext/transcriptions:transcribe` with enhanced mode; the host comes from `AZURE_FOUNDRY_ENDPOINT` | words, merged with the 0.2 s rule |
 | `elevenlabs`        | `POST {base_url}/speech-to-text` with `diarize=true`                    | words, merged with the 0.2 s rule |
+| `meta`              | `POST {base_url}/asr/transcribe` with `mode=DIARIZATION`; long mixes are split into 3-minute windows and speakers linked across a 30 s overlap | segments |
+| `xai`               | `POST {base_url}/stt` with `diarize=true`                               | words, merged with the 0.2 s rule |
 | `pyannote`          | local `pyannote.audio` pipeline (`uv sync --extra local`, `HF_TOKEN`)   | segments |
+| `diarizen`          | local DiariZen pipeline in `.cache/diarizen-venv` (its pyannote 3.1 fork) | segments |
 | `rttm`              | reads `<dir>/<conversation>.rttm` produced elsewhere                     | segments |
 
 Options never contain credentials; keys are read from the environment variables listed in `env`.
@@ -220,7 +224,7 @@ src/converse_diarization/
   metrics.py      exact-interval DER / JER / speaker count, overlap share, RTTM
   config.py       model TOML loading
   registry.py     models.toml parsing / `models add`
-  providers/      openai_compatible, openrouter, deepgram, assemblyai, elevenlabs, pyannote, rttm (+ retrying HTTP, audio prep)
+  providers/      openai_compatible, openrouter, deepgram, assemblyai, azure, diarizen, elevenlabs, meta, xai, pyannote, rttm (+ retrying HTTP, audio prep)
   runner.py       resumable diarization + scoring of a run directory
   report.py       leaderboard HTML
   models/         built-in model configs
