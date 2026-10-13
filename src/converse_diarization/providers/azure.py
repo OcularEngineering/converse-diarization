@@ -118,7 +118,9 @@ class AzureProvider(Provider):
         if not self.api_version:
             problems.append("api_version must be set")
         if self.transcribe_style not in _STYLES:
-            problems.append(f"transcribe_style must be one of {', '.join(sorted(_STYLES))}; got {self.transcribe_style!r}")
+            problems.append(
+                f"transcribe_style must be one of {', '.join(sorted(_STYLES))}; got {self.transcribe_style!r}"
+            )
         if not isinstance(self.config.options.get("language_hint", True), bool):
             problems.append("language_hint must be true or false")
         return problems

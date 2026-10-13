@@ -6,7 +6,7 @@
 #                   assemblyai); other vendors need `provider_options = { <slug> = { ... } }`.
 #   direct          url + key (the NAME of the variable in .env) against the vendor's own API.
 # Optional everywhere: model (defaults to the table name), vendor, display_name, href, notes, provider
-# (openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | xai | pyannote | rttm), options.
+# (openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | nemo | xai | pyannote | rttm), options.
 #
 # Shell: converse-diarization models add <name> --openrouter --model <vendor/id>
 #    or: converse-diarization models add <name> --url <base url> --key <secret or ENV>
@@ -168,3 +168,19 @@ notes = "Local DiariZen pipeline. Overlapping turns are kept and scored as segme
 
 [diarizen-wavlm-large-s80-md-v2.options]
 python = ".cache/diarizen-venv/bin/python"
+
+[nemotron-3-diarization]
+provider = "nemo"
+model = "nvidia/Nemotron-3-Diarization"
+vendor = "NVIDIA"
+display_name = "Nemotron 3 Diarization"
+href = "https://huggingface.co/nvidia/Nemotron-3-Diarization"
+notes = "Local NeMo Sortformer pipeline in .cache/nemotron-venv, offline profile (30.4 s input buffer). Arrival-ordered speaker turns scored as segments; no supplied speaker count."
+
+[nemotron-3-diarization.options]
+python = ".cache/nemotron-venv/bin/python"
+spkcache_len = 264
+fifo_len = 40
+chunk_len = 340
+chunk_right_context = 40
+spkcache_update_period = 300

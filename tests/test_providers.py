@@ -21,6 +21,10 @@ from converse_diarization.providers.deepgram import DeepgramProvider
 from converse_diarization.providers.diarizen import DiariZenProvider, segments_from_payload
 from converse_diarization.providers.elevenlabs import ElevenLabsProvider
 from converse_diarization.providers.meta import MetaProvider, link_speakers
+from converse_diarization.providers.nemo import OFFLINE_PROFILE, NemoProvider
+from converse_diarization.providers.nemo import (
+    segments_from_payload as nemo_segments_from_payload,
+)
 from converse_diarization.providers.openai_compatible import OpenAICompatibleProvider
 from converse_diarization.providers.openrouter import KNOWN_PROVIDER_OPTIONS, OpenRouterProvider
 from converse_diarization.providers.pyannote import PyannoteProvider
@@ -103,6 +107,7 @@ def test_registry_exposes_every_provider():
         "azure",
         "elevenlabs",
         "meta",
+        "nemo",
         "xai",
         "pyannote",
         "rttm",
@@ -723,7 +728,9 @@ def test_xai_language_hint_off_and_missing_speakers(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("XAI_API_KEY", XAI_KEY)
     body = {"text": "hi", "words": [{"text": "hi", "start": 0.0, "end": 0.2}]}
     recorder = Recorder(_queue(httpx.Response(200, json=body)))
-    provider = XAIProvider(_config("xai", "grok-voice-transcribe-2.0", language_hint=False), transport=recorder.transport)
+    provider = XAIProvider(
+        _config("xai", "grok-voice-transcribe-2.0", language_hint=False), transport=recorder.transport
+    )
 
     with pytest.raises(ProviderError, match="speaker-labelled words"):
         provider.diarize(wav, language="en", conversation_id="conv-2")
@@ -1013,7 +1020,9 @@ def test_speech_base_url_drops_a_foundry_project_path():
         speech_base_url("https://example.services.ai.azure.com/api/projects/converse-benchmark")
         == "https://example.services.ai.azure.com"
     )
-    assert speech_base_url("https://example.cognitiveservices.azure.com/") == "https://example.cognitiveservices.azure.com"
+    assert (
+        speech_base_url("https://example.cognitiveservices.azure.com/") == "https://example.cognitiveservices.azure.com"
+    )
 
 
 def test_azure_posts_enhanced_mode_and_keeps_phrase_speakers_on_words(monkeypatch: pytest.MonkeyPatch, wav: Path):
@@ -1084,9 +1093,7 @@ def test_azure_scores_phrases_when_words_are_absent(monkeypatch: pytest.MonkeyPa
         ],
     }
     recorder = Recorder(_queue(httpx.Response(200, json=body)))
-    provider = AzureProvider(
-        _config("azure", "mai-transcribe-2", language_hint=False), transport=recorder.transport
-    )
+    provider = AzureProvider(_config("azure", "mai-transcribe-2", language_hint=False), transport=recorder.transport)
 
     hypothesis = provider.diarize(wav, language="en", conversation_id="conv-2")
 
@@ -1106,9 +1113,7 @@ def test_azure_missing_speakers_and_check(monkeypatch: pytest.MonkeyPatch, wav: 
 
     monkeypatch.delenv("AZURE_FOUNDRY_KEY", raising=False)
     monkeypatch.delenv("AZURE_FOUNDRY_ENDPOINT", raising=False)
-    problems = AzureProvider(
-        _config("azure", "mai-transcribe-2", transcribe_style="fancy", nope=1)
-    ).check()
+    problems = AzureProvider(_config("azure", "mai-transcribe-2", transcribe_style="fancy", nope=1)).check()
     assert any("AZURE_FOUNDRY_KEY" in item for item in problems)
     assert any("AZURE_FOUNDRY_ENDPOINT" in item for item in problems)
     assert any("transcribe_style" in item for item in problems)
@@ -1138,4 +1143,34 @@ def test_diarizen_check_requires_its_interpreter(tmp_path: Path):
     problems = DiariZenProvider(
         _config("diarizen", "BUT-FIT/diarizen-wavlm-large-s80-md-v2", python=str(missing), nope=1)
     ).check()
+    assert any("nope" in item for item in problems)
+
+
+def test_nemo_payload_keeps_labelled_turns():
+    segments = nemo_segments_from_payload(
+        {
+            "segments": [
+                {"speaker": "0", "start_s": 0.2, "end_s": 1.0, "text": None},
+                {"speaker": None, "start_s": 0.0, "end_s": 0.1, "text": None},
+                {"speaker": "1", "start_s": 2.0, "end_s": 1.0, "text": None},
+            ]
+        }
+    )
+    assert segments == [{"speaker": "0", "start_s": 0.2, "end_s": 1.0, "text": None}]
+    with pytest.raises(ProviderError, match="boom"):
+        nemo_segments_from_payload({"error": "boom"})
+
+
+def test_nemo_defaults_to_the_offline_profile_and_checks_options(tmp_path: Path):
+    missing = tmp_path / "missing-python"
+    provider = NemoProvider(_config("nemo", "nvidia/Nemotron-3-Diarization", python=str(missing)))
+    assert provider.profile == OFFLINE_PROFILE
+    problems = provider.check()
+    assert any("not found" in item for item in problems)
+    provider = NemoProvider(
+        _config("nemo", "nvidia/Nemotron-3-Diarization", python=str(missing), chunk_len=6, fifo_len=-1, nope=1)
+    )
+    assert provider.profile["chunk_len"] == 6
+    problems = provider.check()
+    assert any("fifo_len" in item for item in problems)
     assert any("nope" in item for item in problems)

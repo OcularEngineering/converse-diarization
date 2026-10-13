@@ -64,7 +64,9 @@ _LANGUAGE_NAMES = {
 }
 
 
-def plan_windows(duration_s: float, *, window_s: float, overlap_s: float, max_clip_s: float) -> list[tuple[float, float]]:
+def plan_windows(
+    duration_s: float, *, window_s: float, overlap_s: float, max_clip_s: float
+) -> list[tuple[float, float]]:
     """Return ``[start, end)`` spans that each stay within ``max_clip_s`` and overlap by ``overlap_s``."""
     if duration_s <= max_clip_s:
         return [(0.0, duration_s)]
@@ -109,9 +111,7 @@ def _speaker_map(
         matrix = np.zeros((len(extra_labels), len(base_labels)))
         for row, extra_label in enumerate(extra_labels):
             for column, base_label in enumerate(base_labels):
-                matrix[row, column] = _shared_time(
-                    base, extra, base_label, extra_label, overlap_start_s, overlap_end_s
-                )
+                matrix[row, column] = _shared_time(base, extra, base_label, extra_label, overlap_start_s, overlap_end_s)
         rows, columns = linear_sum_assignment(matrix, maximize=True)
         for row, column in zip(rows, columns, strict=True):
             if matrix[row, column] > 0:
@@ -242,9 +242,7 @@ class MetaProvider(Provider):
         if self._workdir is None:
             self._workdir = Path(tempfile.mkdtemp(prefix="converse-diarization-"))
         duration_s, _rate = audio_info(audio)
-        windows = plan_windows(
-            duration_s, window_s=self.window_s, overlap_s=self.overlap_s, max_clip_s=self.max_clip_s
-        )
+        windows = plan_windows(duration_s, window_s=self.window_s, overlap_s=self.overlap_s, max_clip_s=self.max_clip_s)
         segments: list[dict[str, Any]] = []
         calls: list[dict[str, Any]] = []
         for index, (start_s, end_s) in enumerate(windows):

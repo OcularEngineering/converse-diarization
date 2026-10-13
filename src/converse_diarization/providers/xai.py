@@ -174,9 +174,7 @@ class XAIProvider(Provider):
             if segment is not None:
                 segments.append(segment)
         if not segments:
-            raise ProviderError(
-                "xai: response carries no speaker-labelled words; check that diarize=true is accepted"
-            )
+            raise ProviderError("xai: response carries no speaker-labelled words; check that diarize=true is accepted")
         duration = data.get("duration")
         if isinstance(duration, (int, float)) and not isinstance(duration, bool) and math.isfinite(duration):
             duration_s = float(duration)

@@ -61,7 +61,9 @@ class DiariZenProvider(Provider):
         if not self.config.model:
             problems.append("model is required: a Hugging Face repo id such as BUT-FIT/diarizen-wavlm-large-s80-md-v2")
         if not self.python.is_file():
-            problems.append(INSTALL_HINT if self.python == DEFAULT_PYTHON else f"python interpreter not found: {self.python}")
+            problems.append(
+                INSTALL_HINT if self.python == DEFAULT_PYTHON else f"python interpreter not found: {self.python}"
+            )
         elif not WORKER.is_file():
             problems.append(f"diarizen worker script is missing: {WORKER}")
         return problems
@@ -70,7 +72,9 @@ class DiariZenProvider(Provider):
         if self._process is not None and self._process.poll() is None:
             return self._process
         if not self.python.is_file():
-            raise ProviderError(INSTALL_HINT if self.python == DEFAULT_PYTHON else f"python interpreter not found: {self.python}")
+            raise ProviderError(
+                INSTALL_HINT if self.python == DEFAULT_PYTHON else f"python interpreter not found: {self.python}"
+            )
         process = subprocess.Popen(
             [str(self.python), "-u", str(WORKER), self.config.model],
             stdin=subprocess.PIPE,
@@ -114,7 +118,11 @@ class DiariZenProvider(Provider):
             segments=tuple(segments),
             granularity="segment",
             duration_s=audio_info(audio)[0],
-            raw={"model": self.config.model, "python": str(self.python), "speakers": sorted({s["speaker"] for s in segments})},
+            raw={
+                "model": self.config.model,
+                "python": str(self.python),
+                "speakers": sorted({s["speaker"] for s in segments}),
+            },
         )
 
     def close(self) -> None:

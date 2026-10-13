@@ -41,7 +41,8 @@ collection that Ocular AI licenses.
 ## Quick start
 
 ```bash
-cd "Converse Diarization"
+git clone https://github.com/OcularEngineering/converse-diarization.git
+cd converse-diarization
 uv sync --group dev                 # hosted providers only
 uv sync --group dev --extra local   # also installs pyannote.audio + torch for local models
 cp .env.example .env                # add HF_TOKEN and OPENROUTER_API_KEY (plus any direct vendor keys you use)
@@ -186,7 +187,7 @@ with `--model path/to/file.toml`:
 name = "gpt-4o-transcribe-diarize"
 display_name = "GPT-4o Transcribe Diarize"
 vendor = "OpenAI"
-provider = "openai-compatible"   # openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | xai | pyannote | rttm
+provider = "openai-compatible"   # openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | nemo | xai | pyannote | rttm
 model = "gpt-4o-transcribe-diarize"
 env = ["OPENAI_API_KEY"]
 href = "https://platform.openai.com/docs/guides/speech-to-text"
@@ -209,6 +210,7 @@ upload = "mp3"                   # 25 MB upload cap
 | `xai`               | `POST {base_url}/stt` with `diarize=true`                               | words, merged with the 0.2 s rule |
 | `pyannote`          | local `pyannote.audio` pipeline (`uv sync --extra local`, `HF_TOKEN`)   | segments |
 | `diarizen`          | local DiariZen pipeline in `.cache/diarizen-venv` (its pyannote 3.1 fork) | segments |
+| `nemo`              | local NeMo Sortformer model (Nemotron 3 Diarization) in `.cache/nemotron-venv` (NeMo Speech from source: `uv venv .cache/nemotron-venv --python 3.12 && uv pip install --python .cache/nemotron-venv/bin/python Cython packaging 'nemo-toolkit[asr] @ git+https://github.com/NVIDIA-NeMo/Speech.git'`); streaming profile set with `spkcache_len`, `fifo_len`, `chunk_len`, `chunk_right_context`, `spkcache_update_period` | segments |
 | `rttm`              | reads `<dir>/<conversation>.rttm` produced elsewhere                     | segments |
 
 Options never contain credentials; keys are read from the environment variables listed in `env`.
@@ -224,7 +226,7 @@ src/converse_diarization/
   metrics.py      exact-interval DER / JER / speaker count, overlap share, RTTM
   config.py       model TOML loading
   registry.py     models.toml parsing / `models add`
-  providers/      openai_compatible, openrouter, deepgram, assemblyai, azure, diarizen, elevenlabs, meta, xai, pyannote, rttm (+ retrying HTTP, audio prep)
+  providers/      openai_compatible, openrouter, deepgram, assemblyai, azure, diarizen, elevenlabs, meta, nemo, xai, pyannote, rttm (+ retrying HTTP, audio prep)
   runner.py       resumable diarization + scoring of a run directory
   report.py       leaderboard HTML
   models/         built-in model configs
@@ -246,8 +248,8 @@ uv run ruff check . && uv run ruff format --check .
 
 - **More models.** Keep adding hosted and local diarization models to `models.toml` so the board covers every
   system we are asked about; contributions of new entries are welcome.
-- **More providers.** Native adapters for diarization APIs and toolkits that do not fit the current six
-  backends (streaming / WebSocket vendors, NeMo-style local pipelines).
+- **More providers.** Native adapters for diarization APIs and toolkits that do not fit the current
+  backends, starting with streaming / WebSocket vendors.
 - **Speaker-attributed transcription.** Score transcript text per speaker (cpWER) on the same mixes, bridging
   Converse-Diarization and Converse-STT.
 - **More datasets and languages.** Run the same harness over additional Ocular AI conversation sets as they

@@ -15,7 +15,7 @@ from pathlib import Path
 _here = str(Path(__file__).resolve().parent)
 sys.path = [entry for entry in sys.path if entry not in {"", _here} and str(Path(entry).resolve()) != _here]
 
-import torch
+import torch  # noqa: E402  (must follow the sys.path scrub above)
 
 _load = torch.load
 

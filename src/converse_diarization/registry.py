@@ -233,8 +233,9 @@ class Registry:
             "# Models the Ocular AI Converse-Diarization harness runs. One table per model.\n"
             '# Through OpenRouter: provider = "openrouter", model = "<vendor>/<id>", key = "OPENROUTER_API_KEY".\n'
             "# Direct: url + key (the NAME of the variable in .env) for an OpenAI-compatible diarizing endpoint.\n"
-            "# Optional: model (defaults to the table name), vendor, display_name, href, notes, provider\n"
-            "# (openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | xai | pyannote | rttm), options.\n"
+            "# Optional: model (defaults to the table name), vendor, display_name, href, notes, options, provider\n"
+            "# (openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | nemo\n"
+            "#  | xai | pyannote | rttm).\n"
             "# Shell: converse-diarization models add <name> --openrouter --model <vendor/id>\n"
             "#    or: converse-diarization models add <name> --url <base url> --key <secret or ENV>\n"
         )

@@ -10,6 +10,7 @@ from converse_diarization.providers.deepgram import DeepgramProvider
 from converse_diarization.providers.diarizen import DiariZenProvider
 from converse_diarization.providers.elevenlabs import ElevenLabsProvider
 from converse_diarization.providers.meta import MetaProvider
+from converse_diarization.providers.nemo import NemoProvider
 from converse_diarization.providers.openai_compatible import OpenAICompatibleProvider
 from converse_diarization.providers.openrouter import OpenRouterProvider
 from converse_diarization.providers.pyannote import PyannoteProvider
@@ -25,6 +26,7 @@ PROVIDERS: dict[str, type[Provider]] = {
     AzureProvider.key: AzureProvider,
     ElevenLabsProvider.key: ElevenLabsProvider,
     MetaProvider.key: MetaProvider,
+    NemoProvider.key: NemoProvider,
     PyannoteProvider.key: PyannoteProvider,
     RttmProvider.key: RttmProvider,
     XAIProvider.key: XAIProvider,
