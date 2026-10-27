@@ -25,3 +25,7 @@ reports/*.html
 
 # Reference RTTM exports
 reference-rttm/
+
+# Private model registry overlay (pre-release deployments, private endpoints); merged over models.toml
+models.local.toml
+export/

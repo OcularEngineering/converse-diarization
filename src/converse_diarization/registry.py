@@ -12,6 +12,12 @@ Everything else is optional: ``model`` (defaults to the table name), ``vendor``,
 ``display_name``, ``href``, ``notes``, ``provider`` (defaults to
 ``openai-compatible``) and an ``[name.options]`` table for provider options.
 Secrets never live in this file; ``key`` names the environment variable.
+
+A second file next to it, ``models.local.toml``, is read the same way and merged over
+``models.toml``: its tables add to or replace the public ones. It is git-ignored, so
+models that cannot be named in the repository yet (a pre-release deployment, a private
+endpoint) live there, usually with ``prerelease = true``. ``models add`` / ``models remove``
+only ever write ``models.toml``.
 """
 
 from __future__ import annotations
@@ -26,12 +32,13 @@ from converse_diarization.config import ConfigError, ModelConfig, parse_model_co
 
 DEFAULT_REGISTRY = Path("models.toml")
 REGISTRY_ENV = "CONVERSE_DIARIZATION_MODELS_FILE"
+LOCAL_SUFFIX = ".local"  # models.toml -> models.local.toml
 DEFAULT_PROVIDER = "openai-compatible"
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _TRANSCRIPTIONS_SUFFIX = "/audio/transcriptions"
 
 _FIELD_ALIASES = {"url": "base_url", "key": "api_key_env"}
-_TOP_LEVEL = {"name", "display_name", "vendor", "provider", "model", "env", "href", "notes", "options"}
+_TOP_LEVEL = {"name", "display_name", "vendor", "provider", "model", "env", "href", "notes", "options", "prerelease"}
 
 
 def registry_path(path: Path | None = None) -> Path:
@@ -40,6 +47,24 @@ def registry_path(path: Path | None = None) -> Path:
         return Path(path)
     override = os.environ.get(REGISTRY_ENV)
     return Path(override) if override else DEFAULT_REGISTRY
+
+
+def local_registry_path(path: Path) -> Path:
+    """The git-ignored overlay beside a registry file: ``models.toml`` -> ``models.local.toml``."""
+    return path.with_name(f"{path.stem}{LOCAL_SUFFIX}{path.suffix}")
+
+
+def _read_tables(path: Path) -> dict[str, dict[str, Any]]:
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"{path}: invalid TOML: {exc}") from exc
+    entries: dict[str, dict[str, Any]] = {}
+    for name, entry in data.items():
+        if not isinstance(entry, dict):
+            raise ConfigError(f"{path}: top-level key {name!r} must be a table, one per model")
+        entries[name] = entry
+    return entries
 
 
 def normalize_url(url: str) -> str:
@@ -115,6 +140,8 @@ def _config_dict_to_toml(data: dict[str, Any]) -> str:
     for field in ("name", "display_name", "vendor", "provider", "model", "env", "href", "notes"):
         if field in data and data[field] not in (None, "", []):
             lines.append(f"{field} = {_toml_scalar(data[field])}")
+    if data.get("prerelease") is True:
+        lines.append("prerelease = true")
     options = data.get("options") or {}
     if options:
         lines.append("")
@@ -125,29 +152,34 @@ def _config_dict_to_toml(data: dict[str, Any]) -> str:
 
 
 class Registry:
-    """Parsed ``models.toml``. Entries are kept in file order."""
+    """Parsed ``models.toml`` plus its ``models.local.toml`` overlay. Entries are kept in file order,
+    public file first; ``local`` names the entries that came from (or were replaced by) the overlay."""
 
-    def __init__(self, path: Path, entries: dict[str, dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        path: Path,
+        entries: dict[str, dict[str, Any]],
+        overlay: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
         self.path = path
-        self.entries = entries
+        self.local_path = local_registry_path(path)
+        # ``public`` is what models.toml holds and what save() writes; ``entries`` is the merged view.
+        self.public = dict(entries)
+        self.entries = dict(entries)
+        self.local: set[str] = set()
+        for name, entry in (overlay or {}).items():
+            self.entries[name] = entry
+            self.local.add(name)
         self._appended: list[str] = []
         self._rewrite = False
 
     @classmethod
     def load(cls, path: Path | None = None) -> Registry:
         resolved = registry_path(path)
-        if not resolved.is_file():
-            return cls(resolved, {})
-        try:
-            data = tomllib.loads(resolved.read_text(encoding="utf-8"))
-        except tomllib.TOMLDecodeError as exc:
-            raise ConfigError(f"{resolved}: invalid TOML: {exc}") from exc
-        entries: dict[str, dict[str, Any]] = {}
-        for name, entry in data.items():
-            if not isinstance(entry, dict):
-                raise ConfigError(f"{resolved}: top-level key {name!r} must be a table, one per model")
-            entries[name] = entry
-        return cls(resolved, entries)
+        entries = _read_tables(resolved) if resolved.is_file() else {}
+        overlay_path = local_registry_path(resolved)
+        overlay = _read_tables(overlay_path) if overlay_path.is_file() else {}
+        return cls(resolved, entries, overlay)
 
     def names(self) -> list[str]:
         return list(self.entries)
@@ -155,10 +187,13 @@ class Registry:
     def __contains__(self, name: object) -> bool:
         return name in self.entries
 
+    def source_of(self, name: str) -> Path:
+        return self.local_path if name in self.local else self.path
+
     def config(self, name: str) -> ModelConfig:
         if name not in self.entries:
             raise ConfigError(f"model {name!r} is not in {self.path}")
-        source = f"{self.path}:[{name}]"
+        source = f"{self.source_of(name)}:[{name}]"
         data = _entry_to_config_dict(name, self.entries[name], source=source)
         return parse_model_config(_config_dict_to_toml(data), source=source)
 
@@ -180,6 +215,8 @@ class Registry:
         options: dict[str, Any] | None = None,
         replace: bool = False,
     ) -> ModelConfig:
+        if name in self.local:
+            raise ConfigError(f"model {name!r} is defined in {self.local_path}; edit that file by hand")
         if name in self.entries and not replace:
             raise ConfigError(f"model {name!r} already exists in {self.path}; pass --replace to overwrite it")
         entry: dict[str, Any] = {}
@@ -200,16 +237,20 @@ class Registry:
         source = f"{self.path}:[{name}]"
         expanded = _entry_to_config_dict(name, entry, source=source)
         config = parse_model_config(_config_dict_to_toml(expanded), source=source)
-        if name in self.entries:
+        if name in self.public:
             self._rewrite = True  # replacing: the old block has to go
         else:
             self._appended.append(name)
+        self.public[name] = entry
         self.entries[name] = entry
         return config
 
     def remove(self, name: str) -> None:
-        if name not in self.entries:
+        if name in self.local:
+            raise ConfigError(f"model {name!r} is defined in {self.local_path}; edit that file by hand")
+        if name not in self.public:
             raise ConfigError(f"model {name!r} is not in {self.path}")
+        del self.public[name]
         del self.entries[name]
         self._rewrite = True
 
@@ -235,11 +276,11 @@ class Registry:
             "# Direct: url + key (the NAME of the variable in .env) for an OpenAI-compatible diarizing endpoint.\n"
             "# Optional: model (defaults to the table name), vendor, display_name, href, notes, options, provider\n"
             "# (openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | nemo\n"
-            "#  | xai | pyannote | rttm).\n"
+            "#  | xai | pyannote | qwen-asr | rttm).\n"
             "# Shell: converse-diarization models add <name> --openrouter --model <vendor/id>\n"
             "#    or: converse-diarization models add <name> --url <base url> --key <secret or ENV>\n"
         )
-        blocks = [header] + [self._render_entry(name, entry) for name, entry in self.entries.items()]
+        blocks = [header] + [self._render_entry(name, entry) for name, entry in self.public.items()]
         return "\n".join(blocks)
 
     def save(self) -> Path:
@@ -249,7 +290,7 @@ class Registry:
             existing = self.path.read_text(encoding="utf-8")
             if existing and not existing.endswith("\n"):
                 existing += "\n"
-            blocks = [self._render_entry(name, self.entries[name]) for name in self._appended]
+            blocks = [self._render_entry(name, self.public[name]) for name in self._appended]
             self.path.write_text(existing + "".join(f"\n{block}" for block in blocks), encoding="utf-8")
         else:
             self.path.write_text(self.render(), encoding="utf-8")
@@ -286,8 +327,10 @@ def upsert_dotenv(path: Path, key: str, value: str) -> Path:
 __all__ = [
     "DEFAULT_PROVIDER",
     "DEFAULT_REGISTRY",
+    "LOCAL_SUFFIX",
     "REGISTRY_ENV",
     "Registry",
+    "local_registry_path",
     "looks_like_env_name",
     "normalize_url",
     "registry_path",

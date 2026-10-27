@@ -1,0 +1,12 @@
+# Changes to what a score *is* need an Ocular maintainer's review: these files decide every number
+# on the published board, and a change to them is a new board version (see tests/test_pinned_scores.py).
+/src/converse_diarization/metrics.py    @MichaelMoyoMushabati
+/src/converse_diarization/reference.py  @MichaelMoyoMushabati
+/src/converse_diarization/mix.py        @MichaelMoyoMushabati
+/src/converse_diarization/runner.py     @MichaelMoyoMushabati
+/src/converse_diarization/export.py     @MichaelMoyoMushabati
+/src/converse_diarization/boards/       @MichaelMoyoMushabati
+/tests/test_pinned_scores.py            @MichaelMoyoMushabati
+/pyproject.toml                         @MichaelMoyoMushabati
+/models.toml                            @MichaelMoyoMushabati
+/scripts/publish.sh                     @MichaelMoyoMushabati

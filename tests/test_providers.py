@@ -28,6 +28,10 @@ from converse_diarization.providers.nemo import (
 from converse_diarization.providers.openai_compatible import OpenAICompatibleProvider
 from converse_diarization.providers.openrouter import KNOWN_PROVIDER_OPTIONS, OpenRouterProvider
 from converse_diarization.providers.pyannote import PyannoteProvider
+from converse_diarization.providers.qwen_asr import QwenASRProvider, language_name
+from converse_diarization.providers.qwen_asr import (
+    segments_from_payload as qwen_segments_from_payload,
+)
 from converse_diarization.providers.rttm import RttmProvider, parse_rttm
 from converse_diarization.providers.xai import XAIProvider
 
@@ -110,6 +114,7 @@ def test_registry_exposes_every_provider():
         "nemo",
         "xai",
         "pyannote",
+        "qwen-asr",
         "rttm",
     }
     assert isinstance(create_provider(_config("deepgram", "nova-3")), DeepgramProvider)
@@ -1173,4 +1178,68 @@ def test_nemo_defaults_to_the_offline_profile_and_checks_options(tmp_path: Path)
     assert provider.profile["chunk_len"] == 6
     problems = provider.check()
     assert any("fifo_len" in item for item in problems)
+    assert any("nope" in item for item in problems)
+
+
+# --- Qwen3-ASR (FunASR speaker pipeline) ---------------------------------------
+
+
+QWEN_PAYLOAD = {
+    "device": "mps",
+    "words": [
+        {"speaker": "1", "start_s": 0.2, "end_s": 0.5, "text": "so"},
+        {"speaker": "1", "start_s": 0.6, "end_s": 1.0, "text": "consider"},
+        {"speaker": None, "start_s": 1.1, "end_s": 1.3, "text": "x"},
+        {"speaker": "2", "start_s": 2.0, "end_s": 1.0, "text": "bad"},
+        {"speaker": "2", "start_s": 25.9, "end_s": 26.3, "text": "absolutely"},
+    ],
+    "turns": [
+        {"speaker": "0", "start_s": 0.0, "end_s": 1.12},
+        {"speaker": "1", "start_s": 1.12, "end_s": 25.88},
+        {"speaker": "2", "start_s": 25.88, "end_s": 59.98},
+    ],
+}
+
+
+def test_qwen_payload_scores_words_or_speaker_turns():
+    words = qwen_segments_from_payload(QWEN_PAYLOAD, turns="word")
+    assert [w["text"] for w in words] == ["so", "consider", "absolutely"]
+    assert words[0] == {"speaker": "1", "start_s": 0.2, "end_s": 0.5, "text": "so"}
+    turns = qwen_segments_from_payload(QWEN_PAYLOAD, turns="speaker")
+    assert [(t["speaker"], t["start_s"], t["end_s"]) for t in turns] == [
+        ("0", 0.0, 1.12),
+        ("1", 1.12, 25.88),
+        ("2", 25.88, 59.98),
+    ]
+    assert all(t["text"] is None for t in turns)
+    with pytest.raises(ProviderError, match="boom"):
+        qwen_segments_from_payload({"error": "boom"}, turns="word")
+    with pytest.raises(ProviderError, match="lacks a words list"):
+        qwen_segments_from_payload({"turns": []}, turns="word")
+
+
+def test_qwen_language_names_follow_the_primary_tag():
+    assert language_name("en-US") == "English"
+    assert language_name("zh") == "Chinese"
+    assert language_name("xx") is None
+
+
+def test_qwen_defaults_and_option_checks(tmp_path: Path):
+    missing = tmp_path / "missing-python"
+    provider = QwenASRProvider(_config("qwen-asr", "Qwen/Qwen3-ASR-1.7B", python=str(missing)))
+    assert provider.settings == {
+        "vad_model": "funasr/fsmn-vad",
+        "spk_model": "funasr/campplus",
+        "forced_aligner": "Qwen/Qwen3-ForcedAligner-0.6B",
+        "device": "auto",
+        "turns": "word",
+    }
+    problems = provider.check()
+    assert any("not found" in item for item in problems)
+    provider = QwenASRProvider(
+        _config("qwen-asr", "Qwen/Qwen3-ASR-1.7B", python=str(missing), turns="sentence", spk_model="", nope=1)
+    )
+    problems = provider.check()
+    assert any("turns must be one of" in item for item in problems)
+    assert any("spk_model" in item for item in problems)
     assert any("nope" in item for item in problems)

@@ -210,3 +210,36 @@ def test_cli_models_add_requires_url_and_key(tmp_path, capsys):
     assert main(["--models-file", str(registry), "models", "add", "x", "--url", "https://x/v1"]) == 2
     assert "--key is required" in capsys.readouterr().err
     assert not registry.exists()
+
+
+def test_local_overlay_merges_over_the_public_file_and_is_never_written(tmp_path):
+    path = tmp_path / "models.toml"
+    path.write_text(MINIMAL, encoding="utf-8")
+    overlay = tmp_path / "models.local.toml"
+    overlay.write_text(
+        '[secret-diarizer]\nurl = "https://private.example/v1"\nkey = "SECRET_KEY"\nprerelease = true\n\n'
+        '[acme-stt]\nurl = "https://api.acme.ai/v1"\nkey = "ACME_API_KEY"\nnotes = "overridden"\n',
+        encoding="utf-8",
+    )
+    registry = Registry.load(path)
+    assert registry.names() == ["acme-stt-1", "acme-stt", "secret-diarizer"], "public order first, overlay after"
+    assert registry.local == {"secret-diarizer", "acme-stt"}
+    assert registry.config("secret-diarizer").prerelease is True
+    assert registry.config("acme-stt").notes == "overridden", "an overlay table replaces the public one"
+    assert registry.config("secret-diarizer").source.startswith(str(overlay))
+    assert registry.entries["secret-diarizer"].get("prerelease") is True, "export's is_prerelease reads entries"
+    assert registry.config("acme-stt-1").prerelease is False
+
+    with pytest.raises(ConfigError, match="models.local.toml"):
+        registry.remove("secret-diarizer")
+    with pytest.raises(ConfigError, match="models.local.toml"):
+        registry.add("secret-diarizer", url="https://x.example/v1", key_env="X_KEY", replace=True)
+
+    registry.add("new-one", url="https://api.new.example/v1", key_env="NEW_API_KEY")
+    registry.remove("acme-stt-1")
+    registry.save()
+    public = path.read_text(encoding="utf-8")
+    assert "secret-diarizer" not in public and "private.example" not in public, "overlay never reaches models.toml"
+    assert "[new-one]" in public and "[acme-stt-1]" not in public
+    assert overlay.read_text(encoding="utf-8").count("[") == 2, "the overlay is left alone"
+    assert Registry.load(path).names() == ["acme-stt", "new-one", "secret-diarizer"]

@@ -34,10 +34,11 @@ PROVIDER_CHOICES = (
     "meta",
     "xai",
     "pyannote",
+    "qwen-asr",
     "rttm",
 )
 URL_PROVIDERS = {"openai-compatible", "deepgram", "assemblyai", "elevenlabs", "meta", "xai"}
-KEYLESS_PROVIDERS = {"pyannote", "rttm", "diarizen"}
+KEYLESS_PROVIDERS = {"pyannote", "rttm", "diarizen", "qwen-asr"}
 OPENROUTER_PROVIDER = "openrouter"
 
 
@@ -407,6 +408,40 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    from converse_diarization.export import (
+        BOARD_FILE,
+        TIMELINES_FILE,
+        WINDOWS_FILE,
+        build_export,
+        format_table,
+        load_board,
+        write_export,
+    )
+    from converse_diarization.report import ReportError, discover_runs
+
+    run_dirs = list(args.run or []) or discover_runs(args.runs_dir)
+    if not run_dirs:
+        return _fail(f"no scored runs under {args.runs_dir}; run a model first or pass --run")
+    try:
+        registry = Registry.load(args.models_file)
+        export = build_export(
+            run_dirs,
+            board=load_board(args.board),
+            registry=registry,
+            generated=args.generated,
+            include_prerelease=args.include_prerelease,
+        )
+        root = write_export(export, args.out)
+    except (ConfigError, ReportError) as exc:
+        return _fail(str(exc))
+    for name in export["excluded"]:
+        print(f"excluded pre-release run {name} (pass --include-prerelease to keep it)", file=sys.stderr)
+    print(f"{root / BOARD_FILE}; {root / TIMELINES_FILE}; {root / WINDOWS_FILE}")
+    print(format_table(export))
+    return 0
+
+
 # --- rttm ------------------------------------------------------------------------
 
 
@@ -568,6 +603,27 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--output", type=Path, default=DEFAULT_REPORT)
     report.add_argument("--label", default="This sample", help="label for harness rows")
     report.set_defaults(func=cmd_report)
+
+    export = sub.add_parser(
+        "export",
+        help="write the board, timelines, report windows and vendor marks the website syncs "
+        "(default: every run in runs/)",
+    )
+    export.add_argument(
+        "--run", type=Path, action="append", help="run directory (repeatable); default: every scored run"
+    )
+    export.add_argument(
+        "--board",
+        default=None,
+        help="board file naming the slug, version, open-weight models and report windows "
+        "(built-in name or JSON path; default: converse-diarization)",
+    )
+    export.add_argument("--out", type=Path, default=Path("export"), help="output root (default: export/)")
+    export.add_argument(
+        "--include-prerelease", action="store_true", help="keep runs of models marked prerelease = true"
+    )
+    export.add_argument("--generated", default=None, help="label for the build date (default: today)")
+    export.set_defaults(func=cmd_export)
 
     rttm = sub.add_parser("rttm", help="export the reference speaker timelines as RTTM files")
     rttm.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
