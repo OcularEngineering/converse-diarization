@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The readiness check behind `models add` / `models check` wants ffmpeg on PATH for mp3 uploads.
+      - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --group dev
+      - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
+      # tests/test_pinned_scores.py fails when the scorer or segment rules change what a published
+      # number would be; that is a new board version, see the test's docstring.
+      - run: uv run pytest
+
+  no-private-models:
+    # The registry overlay for pre-release or private models is models.local.toml and must never be
+    # committed; nor may a models.toml table be marked prerelease (the public export would then silently
+    # change on the next publish without a reviewer seeing a model added).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: models.local.toml is not tracked
+        run: |
+          if git ls-files --error-unmatch models.local.toml >/dev/null 2>&1; then
+            echo "models.local.toml is committed; it must stay git-ignored" >&2; exit 1
+          fi
+      - name: no prerelease flag in the public registry
+        run: |
+          if grep -nE '^\s*prerelease\s*=\s*true' models.toml; then
+            echo "models.toml marks a model prerelease; pre-release models belong in models.local.toml" >&2; exit 1
+          fi

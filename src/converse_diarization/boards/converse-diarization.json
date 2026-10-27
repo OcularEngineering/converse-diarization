@@ -1,0 +1,17 @@
+{
+  "slug": "converse-diarization",
+  "version": "1",
+  "openWeights": [
+    "pyannote-community-1",
+    "diarizen-wavlm-large-s80-md-v2",
+    "nemotron-3-diarization",
+    "qwen3-asr-1-7b-funasr"
+  ],
+  "displayNames": {
+    "pyannote-community-1": "Pyannote Community-1"
+  },
+  "windows": {
+    "medium": { "label": "Medium overlap", "conversation": "ocular-86c27418", "start_s": 436, "duration_s": 15 },
+    "high": { "label": "High overlap", "conversation": "ocular-2bb0cfe2", "start_s": 864, "duration_s": 15 }
+  }
+}

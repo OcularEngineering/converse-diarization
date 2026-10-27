@@ -53,6 +53,7 @@ uv run converse-diarization check               # credentials + dependencies for
 uv run converse-diarization run --model deepgram-nova-3   # mix + diarize + score -> runs/deepgram-nova-3
 uv run converse-diarization report              # every scored run in runs/ -> reports/converse-diarization.html
 open reports/converse-diarization.html
+uv run converse-diarization export              # the same runs as JSON for the website -> export/converse-diarization/v1/
 ```
 
 `.env` is loaded automatically from the working directory and never committed.
@@ -216,10 +217,38 @@ upload = "mp3"                   # 25 MB upload cap
 
 Options never contain credentials; keys are read from the environment variables listed in `env`.
 
+## Publishing: two exports, two sites
+
+Ocular publishes the board twice from the same runs: the public leaderboard on useocular.com and an internal
+site that also shows models scored on pre-release deployments. The export is the only hand-off; neither site
+reads a run directory or the HTML report. Release status is decided here, once, and never on a site:
+
+```sh
+uv run converse-diarization export --out export/public                          # what the public site gets
+uv run converse-diarization export --out export/internal --include-prerelease   # the internal site: every run
+```
+
+Each export is `export/<slug>/v<version>/` holding `board.json` (every run with pooled seconds per tier and
+conversation, plus `access`, `route` and `prerelease` per row), `timelines.json` (reference and hypothesis
+speaker segments in milliseconds), `windows.json` (the 15 s report excerpts) and `logos/`. The slug, version,
+open-weight list and window positions come from `src/converse_diarization/boards/converse-diarization.json`.
+
+- A model that must not be named in this repository yet goes in `models.local.toml` (git-ignored, merged over
+  `models.toml`) with `prerelease = true`. Its run is dropped from the public export together with its timelines
+  and window slices, and `prerelease: true` is written on its row in the internal export so that site can mark
+  it "Preview". When the model ships, move the table into `models.toml`, drop the flag, re-export, re-sync.
+- `board.json` records `harness.version` and `harness.commit` (the git SHA of this checkout), so every published
+  board names the exact scoring code. A change to the scorer, the segment rules or the dataset makes a new board
+  **version**, never an update to a published one (`tests/test_pinned_scores.py` is the first gate); the site
+  syncs refuse to overwrite a version whose harness version differs unless told it is a new version.
+- `scripts/publish.sh` runs both exports, syncs each into its site checkout and opens the two review PRs; see
+  the script header for the checkout paths it expects.
+
 ## Layout
 
 ```
 models.toml       the models this harness runs (url + key per model)
+models.local.toml git-ignored overlay for models that cannot be named here yet (prerelease = true)
 src/converse_diarization/
   dataset.py      Hugging Face / local AudioFolder -> manifest.json
   mix.py          two speaker tracks -> one 16 kHz mono WAV (mono-mix-v1)
@@ -230,12 +259,16 @@ src/converse_diarization/
   providers/      openai_compatible, openrouter, deepgram, assemblyai, azure, diarizen, elevenlabs, meta, nemo, xai, pyannote, qwen_asr, rttm (+ retrying HTTP, audio prep)
   runner.py       resumable diarization + scoring of a run directory
   report.py       leaderboard HTML
+  export.py       board.json / timelines.json / windows.json / logos for the website
+  boards/         converse-diarization.json: slug, version, open-weight models, report windows
   models/         built-in model configs
-  templates/      leaderboard.html
-tests/            pytest, no network
+  templates/      leaderboard.html, logos/
+scripts/publish.sh  export both profiles, sync both sites, open the review PRs
+tests/            pytest, no network (test_pinned_scores.py pins the numbers the published board depends on)
 data/             datasets and mixes (gitignored)
 runs/             run directories (gitignored)
 reports/          generated HTML (gitignored)
+export/           website exports (gitignored)
 ```
 
 ## Development
