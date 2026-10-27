@@ -14,6 +14,7 @@ from converse_diarization.providers.nemo import NemoProvider
 from converse_diarization.providers.openai_compatible import OpenAICompatibleProvider
 from converse_diarization.providers.openrouter import OpenRouterProvider
 from converse_diarization.providers.pyannote import PyannoteProvider
+from converse_diarization.providers.qwen_asr import QwenASRProvider
 from converse_diarization.providers.rttm import RttmProvider
 from converse_diarization.providers.xai import XAIProvider
 
@@ -28,6 +29,7 @@ PROVIDERS: dict[str, type[Provider]] = {
     MetaProvider.key: MetaProvider,
     NemoProvider.key: NemoProvider,
     PyannoteProvider.key: PyannoteProvider,
+    QwenASRProvider.key: QwenASRProvider,
     RttmProvider.key: RttmProvider,
     XAIProvider.key: XAIProvider,
 }

@@ -187,7 +187,7 @@ with `--model path/to/file.toml`:
 name = "gpt-4o-transcribe-diarize"
 display_name = "GPT-4o Transcribe Diarize"
 vendor = "OpenAI"
-provider = "openai-compatible"   # openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | nemo | xai | pyannote | rttm
+provider = "openai-compatible"   # openai-compatible | openrouter | deepgram | assemblyai | azure | diarizen | elevenlabs | meta | nemo | xai | pyannote | qwen-asr | rttm
 model = "gpt-4o-transcribe-diarize"
 env = ["OPENAI_API_KEY"]
 href = "https://platform.openai.com/docs/guides/speech-to-text"
@@ -211,6 +211,7 @@ upload = "mp3"                   # 25 MB upload cap
 | `pyannote`          | local `pyannote.audio` pipeline (`uv sync --extra local`, `HF_TOKEN`)   | segments |
 | `diarizen`          | local DiariZen pipeline in `.cache/diarizen-venv` (its pyannote 3.1 fork) | segments |
 | `nemo`              | local NeMo Sortformer model (Nemotron 3 Diarization) in `.cache/nemotron-venv` (NeMo Speech from source: `uv venv .cache/nemotron-venv --python 3.12 && uv pip install --python .cache/nemotron-venv/bin/python Cython packaging 'nemo-toolkit[asr] @ git+https://github.com/NVIDIA-NeMo/Speech.git'`); streaming profile set with `spkcache_len`, `fifo_len`, `chunk_len`, `chunk_right_context`, `spkcache_update_period` | segments |
+| `qwen-asr`          | local Qwen3-ASR speaker pipeline through FunASR in `.cache/qwen-asr-venv` (`uv venv .cache/qwen-asr-venv --python 3.12 && uv pip install --python .cache/qwen-asr-venv/bin/python 'qwen-asr==0.0.6' 'transformers==4.57.6' accelerate 'funasr>=1.4.16' torch torchaudio`): FSMN-VAD, Qwen3-ASR text, Qwen3-ForcedAligner word timestamps, CAM++ speaker turns; `turns = "speaker"` scores the clustered timeline instead | words, merged with the 0.2 s rule |
 | `rttm`              | reads `<dir>/<conversation>.rttm` produced elsewhere                     | segments |
 
 Options never contain credentials; keys are read from the environment variables listed in `env`.
@@ -226,7 +227,7 @@ src/converse_diarization/
   metrics.py      exact-interval DER / JER / speaker count, overlap share, RTTM
   config.py       model TOML loading
   registry.py     models.toml parsing / `models add`
-  providers/      openai_compatible, openrouter, deepgram, assemblyai, azure, diarizen, elevenlabs, meta, nemo, xai, pyannote, rttm (+ retrying HTTP, audio prep)
+  providers/      openai_compatible, openrouter, deepgram, assemblyai, azure, diarizen, elevenlabs, meta, nemo, xai, pyannote, qwen_asr, rttm (+ retrying HTTP, audio prep)
   runner.py       resumable diarization + scoring of a run directory
   report.py       leaderboard HTML
   models/         built-in model configs

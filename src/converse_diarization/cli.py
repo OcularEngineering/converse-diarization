@@ -34,10 +34,11 @@ PROVIDER_CHOICES = (
     "meta",
     "xai",
     "pyannote",
+    "qwen-asr",
     "rttm",
 )
 URL_PROVIDERS = {"openai-compatible", "deepgram", "assemblyai", "elevenlabs", "meta", "xai"}
-KEYLESS_PROVIDERS = {"pyannote", "rttm", "diarizen"}
+KEYLESS_PROVIDERS = {"pyannote", "rttm", "diarizen", "qwen-asr"}
 OPENROUTER_PROVIDER = "openrouter"
 
 

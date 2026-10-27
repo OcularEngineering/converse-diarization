@@ -184,3 +184,14 @@ fifo_len = 40
 chunk_len = 340
 chunk_right_context = 40
 spkcache_update_period = 300
+
+[qwen3-asr-1-7b-funasr]
+provider = "qwen-asr"
+model = "Qwen/Qwen3-ASR-1.7B"
+vendor = "Alibaba"
+display_name = "Qwen3-ASR 1.7B + FunASR speakers"
+href = "https://huggingface.co/Qwen/Qwen3-ASR-1.7B"
+notes = "Open-weight Qwen3-ASR has no speaker labels of its own; this is Alibaba's FunASR speaker pipeline around it (FSMN-VAD, Qwen3-ForcedAligner word timestamps, CAM++ embeddings clustered into turns), run locally in .cache/qwen-asr-venv. Words take the speaker of their turn and are merged with the 0.2 s rule."
+
+[qwen3-asr-1-7b-funasr.options]
+python = ".cache/qwen-asr-venv/bin/python"
