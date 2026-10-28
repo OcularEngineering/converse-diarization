@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import re
 import sys
@@ -24,6 +25,14 @@ from converse_diarization.providers.meta import MetaProvider, link_speakers
 from converse_diarization.providers.nemo import OFFLINE_PROFILE, NemoProvider
 from converse_diarization.providers.nemo import (
     segments_from_payload as nemo_segments_from_payload,
+)
+from converse_diarization.providers.nemotron_transcribe import (
+    DIARIZATION_PROMPT,
+    NemotronTranscribeProvider,
+    cleanup_generation_loops,
+    diarization_segments,
+    speaker_label,
+    word_segments,
 )
 from converse_diarization.providers.openai_compatible import OpenAICompatibleProvider
 from converse_diarization.providers.openrouter import KNOWN_PROVIDER_OPTIONS, OpenRouterProvider
@@ -112,6 +121,7 @@ def test_registry_exposes_every_provider():
         "elevenlabs",
         "meta",
         "nemo",
+        "nemotron-transcribe",
         "xai",
         "pyannote",
         "qwen-asr",
@@ -681,6 +691,278 @@ def test_elevenlabs_language_hint_off_and_missing_speakers(monkeypatch: pytest.M
     with pytest.raises(ProviderError, match="speaker-labelled words"):
         provider.diarize(wav, language="en", conversation_id="conv-2")
     assert "language_code" not in _multipart(recorder.requests[0])[0]
+
+
+# --- Nemotron Transcribe ---------------------------------------------------------
+
+NEMOTRON_ENDPOINT = "https://nemotron.example.test"
+NEMOTRON_MODEL = "nvidia/Nemotron-3.5-Transcribe-30B-A4B"
+
+
+def _nemotron_body(**overrides: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "id": "chatcmpl-nemo-1",
+        "model": NEMOTRON_MODEL,
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "<spk:0> Hi there. <spk:1> Hello."},
+            }
+        ],
+        "usage": {"prompt_tokens": 1200, "completion_tokens": 12},
+        "ctc_timestamps": {
+            "words": [
+                {"word": "Hi", "start": 0.0, "end": 0.2, "speaker": "<spk:0>"},
+                {"word": "there.", "start": 0.25, "end": 0.5, "speaker": "<spk:0>"},
+                {"word": "Hello.", "start": 0.9, "end": 1.2, "speaker": "<spk:1>"},
+            ],
+            "diarization": [
+                {"start": 0.9, "end": 1.25, "speaker": 1},
+                {"start": 0.0, "end": 0.55, "speaker": 0},
+            ],
+            "speaker_tag_to_diarization_speaker": {"<spk:0>": 0, "<spk:1>": 1},
+            "error": None,
+        },
+    }
+    body.update(overrides)
+    return body
+
+
+def test_nemotron_transcribe_posts_chat_completion_and_scores_diarization_spans(
+    monkeypatch: pytest.MonkeyPatch, wav: Path
+):
+    monkeypatch.setenv("NEMOTRON_TRANSCRIBE_ENDPOINT", NEMOTRON_ENDPOINT)
+    recorder = Recorder(_queue(httpx.Response(200, json=_nemotron_body(), headers={"x-request-id": "req-1"})))
+    provider = NemotronTranscribeProvider(
+        _config("nemotron-transcribe", NEMOTRON_MODEL, user_agent="brev-transcribe-client/1.0"),
+        transport=recorder.transport,
+    )
+
+    with provider:
+        hypothesis = provider.diarize(wav, language="en", conversation_id="conv-1")
+
+    assert hypothesis.granularity == "segment"
+    assert hypothesis.duration_s == pytest.approx(0.5)
+    assert hypothesis.segments == (
+        {"speaker": "0", "start_s": 0.0, "end_s": 0.55, "text": None},
+        {"speaker": "1", "start_s": 0.9, "end_s": 1.25, "text": None},
+    )
+    request = recorder.requests[0]
+    assert str(request.url) == f"{NEMOTRON_ENDPOINT}/v1/chat/completions"
+    assert request.headers["user-agent"] == "brev-transcribe-client/1.0"
+    assert "authorization" not in request.headers
+    payload = json.loads(request.content)
+    assert payload["model"] == NEMOTRON_MODEL
+    assert payload["temperature"] == 0 and payload["top_p"] == 1.0 and payload["seed"] == 0
+    assert payload["max_tokens"] == 16_384 and payload["stream"] is False
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+    assert payload["skip_special_tokens"] is False and payload["spaces_between_special_tokens"] is False
+    assert payload["mm_processor_kwargs"] == {"capture_ctc_timestamps": True}
+    [message] = payload["messages"]
+    assert message["role"] == "user" and message["content"][0] == {"type": "text", "text": DIARIZATION_PROMPT}
+    url = message["content"][1]["audio_url"]["url"]
+    assert url.startswith("data:audio/flac;base64,")
+    decoded = base64.b64decode(url.split(",", 1)[1])
+    assert decoded[:4] == b"fLaC"
+    assert hypothesis.raw["request_id"] == "req-1"
+    assert hypothesis.raw["finish_reason"] == "stop"
+    assert hypothesis.raw["upload"] == {"format": "flac", "content_type": "audio/flac", "bytes": len(decoded)}
+    assert hypothesis.raw["settings"]["segments"] == "diarization"
+    assert hypothesis.raw["speaker_tag_to_diarization_speaker"] == {"<spk:0>": 0, "<spk:1>": 1}
+    assert hypothesis.raw["words"] == 3
+    assert hypothesis.raw["content"] == "<spk:0> Hi there. <spk:1> Hello."
+
+
+def test_nemotron_transcribe_words_mode_wav_upload_and_bearer(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("NEMO_URL", NEMOTRON_ENDPOINT + "/v1/chat/completions/")
+    monkeypatch.setenv("NEMO_TOKEN", "nemo-secret-token")
+    recorder = Recorder(_queue(httpx.Response(200, json=_nemotron_body())))
+    provider = NemotronTranscribeProvider(
+        _config(
+            "nemotron-transcribe",
+            NEMOTRON_MODEL,
+            endpoint_env="NEMO_URL",
+            api_key_env="NEMO_TOKEN",
+            upload="wav",
+            segments="words",
+            seed=None,
+        ),
+        transport=recorder.transport,
+    )
+
+    hypothesis = provider.diarize(wav, language="en", conversation_id="conv-2")
+
+    assert hypothesis.granularity == "word"
+    assert hypothesis.segments == (
+        {"speaker": "0", "start_s": 0.0, "end_s": 0.2, "text": "Hi"},
+        {"speaker": "0", "start_s": 0.25, "end_s": 0.5, "text": "there."},
+        {"speaker": "1", "start_s": 0.9, "end_s": 1.2, "text": "Hello."},
+    )
+    request = recorder.requests[0]
+    assert str(request.url) == f"{NEMOTRON_ENDPOINT}/v1/chat/completions"
+    assert request.headers["authorization"] == "Bearer nemo-secret-token"
+    payload = json.loads(request.content)
+    assert "seed" not in payload
+    assert payload["messages"][0]["content"][1]["audio_url"]["url"].startswith("data:audio/wav;base64,")
+    assert "nemo-secret-token" not in json.dumps(hypothesis.raw)
+
+
+@pytest.mark.parametrize(
+    ("body", "match"),
+    [
+        (
+            _nemotron_body(choices=[{"finish_reason": "length", "message": {"content": "<spk:0> Hi"}}]),
+            "finish_reason='length'",
+        ),
+        ({k: v for k, v in _nemotron_body().items() if k != "ctc_timestamps"}, "ctc_timestamps"),
+        (
+            _nemotron_body(ctc_timestamps={"words": [], "diarization": [], "error": "alignment failed"}),
+            "alignment failed",
+        ),
+        (_nemotron_body(ctc_timestamps={"words": [], "diarization": [], "error": None}), "no speaker segments"),
+        (_nemotron_body(error={"message": "boom"}), "returned an error"),
+    ],
+)
+def test_nemotron_transcribe_rejects_unusable_responses(monkeypatch: pytest.MonkeyPatch, wav: Path, body, match):
+    monkeypatch.setenv("NEMOTRON_TRANSCRIBE_ENDPOINT", NEMOTRON_ENDPOINT)
+    recorder = Recorder(_queue(httpx.Response(200, json=body)))
+    provider = NemotronTranscribeProvider(_config("nemotron-transcribe", NEMOTRON_MODEL), transport=recorder.transport)
+
+    with pytest.raises(ProviderError, match=re.escape(match)):
+        provider.diarize(wav, language="en", conversation_id="conv-3")
+
+
+def test_nemotron_transcribe_words_mode_needs_tagged_words(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("NEMOTRON_TRANSCRIBE_ENDPOINT", NEMOTRON_ENDPOINT)
+    body = _nemotron_body(
+        ctc_timestamps={"words": [{"word": "hi", "start": 0, "end": 0.2}], "diarization": [], "error": None}
+    )
+    recorder = Recorder(_queue(httpx.Response(200, json=body)))
+    provider = NemotronTranscribeProvider(
+        _config("nemotron-transcribe", NEMOTRON_MODEL, segments="words"), transport=recorder.transport
+    )
+
+    with pytest.raises(ProviderError, match="speaker-tagged words"):
+        provider.diarize(wav, language="en", conversation_id="conv-4")
+
+
+def test_nemotron_transcribe_http_error_and_retry(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("NEMOTRON_TRANSCRIBE_ENDPOINT", NEMOTRON_ENDPOINT)
+    recorder = Recorder(
+        _queue(httpx.Response(503, text="busy"), httpx.Response(400, json={"error": {"message": "bad audio"}}))
+    )
+    provider = NemotronTranscribeProvider(
+        _config("nemotron-transcribe", NEMOTRON_MODEL), transport=recorder.transport, sleep=lambda _s: None
+    )
+
+    with pytest.raises(ProviderError) as excinfo:
+        provider.diarize(wav, language="en", conversation_id="conv-5")
+    assert excinfo.value.status == 400
+    assert len(recorder.requests) == 2
+
+
+def test_nemotron_transcribe_check(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("NEMOTRON_TRANSCRIBE_ENDPOINT", raising=False)
+    problems = NemotronTranscribeProvider(
+        _config("nemotron-transcribe", NEMOTRON_MODEL, upload="mp3", segments="turns", prompt="Transcribe.", nope=1)
+    ).check()
+    assert any("NEMOTRON_TRANSCRIBE_ENDPOINT" in item for item in problems)
+    assert any("upload must be" in item for item in problems)
+    assert any("segments must be" in item for item in problems)
+    assert any("speaker tags" in item for item in problems)
+    assert any("nope" in item for item in problems)
+
+    monkeypatch.setenv("NEMOTRON_TRANSCRIBE_ENDPOINT", "nemotron.example.test")
+    assert any(
+        "http" in item for item in NemotronTranscribeProvider(_config("nemotron-transcribe", NEMOTRON_MODEL)).check()
+    )
+    monkeypatch.setenv("NEMOTRON_TRANSCRIBE_ENDPOINT", NEMOTRON_ENDPOINT)
+    assert NemotronTranscribeProvider(_config("nemotron-transcribe", NEMOTRON_MODEL)).check() == []
+    assert NemotronTranscribeProvider(_config("nemotron-transcribe", NEMOTRON_MODEL)).required_env() == (
+        "NEMOTRON_TRANSCRIBE_ENDPOINT",
+    )
+
+
+def test_nemotron_transcribe_collapses_generation_loops_once(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("NEMOTRON_TRANSCRIBE_ENDPOINT", NEMOTRON_ENDPOINT)
+    looped = "<spk:0> hi there " + "a" * 40 + " <spk:1> " + "yes yes " * 25
+    body = _nemotron_body(choices=[{"finish_reason": "stop", "message": {"role": "assistant", "content": looped}}])
+    recorder = Recorder(_queue(httpx.Response(200, json=body)))
+    provider = NemotronTranscribeProvider(_config("nemotron-transcribe", NEMOTRON_MODEL), transport=recorder.transport)
+
+    hypothesis = provider.diarize(wav, language="en", conversation_id="conv-6")
+
+    assert hypothesis.raw["content"] == "<spk:0> hi there a <spk:1> yes "
+    assert hypothesis.raw["generation_loops_collapsed"] is True
+    assert cleanup_generation_loops("<spk:0> hi there") == "<spk:0> hi there"
+    assert cleanup_generation_loops("ab" * 19) == "ab" * 19  # 19 repeats stay; 20+ collapse
+    assert cleanup_generation_loops("ab" * 20) == "ab"
+
+
+def test_nemotron_transcribe_windows_long_mixes_and_links_speakers(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("NEMOTRON_TRANSCRIBE_ENDPOINT", NEMOTRON_ENDPOINT)
+    first = _nemotron_body(
+        ctc_timestamps={"words": [], "diarization": [{"start": 0.0, "end": 0.3, "speaker": 0}], "error": None}
+    )
+    # The second window starts at 0.2 s and labels the same voice "5"; the overlap [0.2, 0.3) links it to "0".
+    second = _nemotron_body(
+        ctc_timestamps={
+            "words": [],
+            "diarization": [{"start": 0.0, "end": 0.1, "speaker": 5}, {"start": 0.15, "end": 0.3, "speaker": 5}],
+            "error": None,
+        }
+    )
+    recorder = Recorder(_queue(httpx.Response(200, json=first), httpx.Response(200, json=second)))
+    provider = NemotronTranscribeProvider(
+        _config("nemotron-transcribe", NEMOTRON_MODEL, max_clip_s=0.3, window_s=0.3, overlap_s=0.1),
+        transport=recorder.transport,
+    )
+    assert provider.check() == []
+
+    with provider:
+        hypothesis = provider.diarize(wav, language="en", conversation_id="conv-7")
+
+    assert len(recorder.requests) == 2
+    assert hypothesis.granularity == "segment" and hypothesis.duration_s == pytest.approx(0.5)
+    assert hypothesis.segments == (
+        {"speaker": "0", "start_s": 0.0, "end_s": 0.3, "text": None},
+        {"speaker": "0", "start_s": pytest.approx(0.35), "end_s": pytest.approx(0.5), "text": None},
+    )
+    windows = hypothesis.raw["windows"]
+    assert [(w["start_s"], w["end_s"]) for w in windows] == [(0.0, pytest.approx(0.3)), (pytest.approx(0.2), 0.5)]
+    assert all(w["finish_reason"] == "stop" and w["upload"]["format"] == "flac" for w in windows)
+    assert hypothesis.raw["settings"]["max_clip_s"] == 0.3 and hypothesis.raw["settings"]["overlap_s"] == 0.1
+    for request in recorder.requests:  # each window uploads 0.3 s of FLAC, not the whole 0.5 s mix
+        url = json.loads(request.content)["messages"][0]["content"][1]["audio_url"]["url"]
+        info = sf.info(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+        assert info.frames / info.samplerate == pytest.approx(0.3, abs=0.01)
+
+    bad = NemotronTranscribeProvider(_config("nemotron-transcribe", NEMOTRON_MODEL, max_clip_s=10, overlap_s=10))
+    assert any("overlap_s" in item for item in bad.check())
+    assert any(
+        "window_s" in item
+        for item in NemotronTranscribeProvider(
+            _config("nemotron-transcribe", NEMOTRON_MODEL, max_clip_s=10, window_s=20)
+        ).check()
+    )
+
+
+def test_nemotron_transcribe_segment_parsers_accept_shape_variants():
+    assert speaker_label("<spk:2>") == "2" and speaker_label("spk:3") == "3" and speaker_label(4) == "4"
+    assert speaker_label("speaker_1") == "speaker_1" and speaker_label(None) is None and speaker_label("") is None
+    spans = diarization_segments({"0": [[0.0, 1.0]], "1": [{"start": 1.5, "duration": 0.5}]})
+    assert spans == [
+        {"speaker": "0", "start_s": 0.0, "end_s": 1.0, "text": None},
+        {"speaker": "1", "start_s": 1.5, "end_s": 2.0, "text": None},
+    ]
+    assert diarization_segments({"segments": [[0.0, 0.4, "<spk:0>"]]}) == [
+        {"speaker": "0", "start_s": 0.0, "end_s": 0.4, "text": None}
+    ]
+    assert diarization_segments([{"start": 1.0, "end": 0.5, "speaker": 0}, "junk", None]) == []
+    assert word_segments([{"word": "a", "start": 0.0, "end": 0.1, "speaker_tag": "<spk:1>"}, {"word": "b"}]) == [
+        {"speaker": "1", "start_s": 0.0, "end_s": 0.1, "text": "a"}
+    ]
+    assert word_segments("nope") == []
 
 
 # --- xAI ------------------------------------------------------------------------

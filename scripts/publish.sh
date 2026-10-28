@@ -55,10 +55,11 @@ done
 
 # ------------------------------------------------------------------ 1-2. export
 cd "$HARNESS"
+# ${GENERATED[@]+"${GENERATED[@]}"}: an empty array is an unbound variable under `set -u` in bash 3.2 (macOS).
 say "exporting public profile"
-uv run converse-diarization export --out export/public "${GENERATED[@]}"
+uv run converse-diarization export --out export/public ${GENERATED[@]+"${GENERATED[@]}"}
 say "exporting internal profile"
-uv run converse-diarization export --out export/internal --include-prerelease "${GENERATED[@]}"
+uv run converse-diarization export --out export/internal --include-prerelease ${GENERATED[@]+"${GENERATED[@]}"}
 
 PUBLIC_BOARD="export/public/$BENCHMARK"
 VERSION="$(ls "$PUBLIC_BOARD" | sed -n 's/^v//p' | sort -n | tail -1)"

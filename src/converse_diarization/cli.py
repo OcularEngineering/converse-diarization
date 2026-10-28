@@ -32,13 +32,20 @@ PROVIDER_CHOICES = (
     "azure",
     "elevenlabs",
     "meta",
+    "nemotron-transcribe",
     "xai",
     "pyannote",
     "qwen-asr",
     "rttm",
 )
 URL_PROVIDERS = {"openai-compatible", "deepgram", "assemblyai", "elevenlabs", "meta", "xai"}
-KEYLESS_PROVIDERS = {"pyannote", "rttm", "diarizen", "qwen-asr"}
+KEYLESS_PROVIDERS = {
+    "pyannote",
+    "rttm",
+    "diarizen",
+    "qwen-asr",
+    "nemotron-transcribe",
+}  # the last reads its URL from .env
 OPENROUTER_PROVIDER = "openrouter"
 
 
