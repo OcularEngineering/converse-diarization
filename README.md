@@ -208,6 +208,7 @@ upload = "mp3"                   # 25 MB upload cap
 | `azure`             | `POST {speech host}/speechtotext/transcriptions:transcribe` with enhanced mode; the host comes from `AZURE_FOUNDRY_ENDPOINT` | words, merged with the 0.2 s rule |
 | `elevenlabs`        | `POST {base_url}/speech-to-text` with `diarize=true`                    | words, merged with the 0.2 s rule |
 | `meta`              | `POST {base_url}/asr/transcribe` with `mode=DIARIZATION`; long mixes are split into 3-minute windows and speakers linked across a 30 s overlap | segments |
+| `nemotron-transcribe` | `POST {NEMOTRON_TRANSCRIBE_ENDPOINT}/v1/chat/completions` (vLLM, base64 audio, the model card's speaker-tag prompt, `capture_ctc_timestamps`); scores the response's `ctc_timestamps.diarization` spans (`segments = "words"` scores the tagged words instead) | segments |
 | `xai`               | `POST {base_url}/stt` with `diarize=true`                               | words, merged with the 0.2 s rule |
 | `pyannote`          | local `pyannote.audio` pipeline (`uv sync --extra local`, `HF_TOKEN`)   | segments |
 | `diarizen`          | local DiariZen pipeline in `.cache/diarizen-venv` (its pyannote 3.1 fork) | segments |
@@ -256,7 +257,7 @@ src/converse_diarization/
   metrics.py      exact-interval DER / JER / speaker count, overlap share, RTTM
   config.py       model TOML loading
   registry.py     models.toml parsing / `models add`
-  providers/      openai_compatible, openrouter, deepgram, assemblyai, azure, diarizen, elevenlabs, meta, nemo, xai, pyannote, qwen_asr, rttm (+ retrying HTTP, audio prep)
+  providers/      openai_compatible, openrouter, deepgram, assemblyai, azure, diarizen, elevenlabs, meta, nemo, nemotron_transcribe, xai, pyannote, qwen_asr, rttm (+ retrying HTTP, audio prep)
   runner.py       resumable diarization + scoring of a run directory
   report.py       leaderboard HTML
   export.py       board.json / timelines.json / windows.json / logos for the website

@@ -5,6 +5,7 @@
     "pyannote-community-1",
     "diarizen-wavlm-large-s80-md-v2",
     "nemotron-3-diarization",
+    "nemotron-3-5-transcribe-30b-a4b",
     "qwen3-asr-1-7b-funasr"
   ],
   "displayNames": {

@@ -195,3 +195,15 @@ notes = "Open-weight Qwen3-ASR has no speaker labels of its own; this is Alibaba
 
 [qwen3-asr-1-7b-funasr.options]
 python = ".cache/qwen-asr-venv/bin/python"
+
+[nemotron-3-5-transcribe-30b-a4b]
+provider = "nemotron-transcribe"
+model = "nvidia/Nemotron-3.5-Transcribe-30B-A4B"
+vendor = "NVIDIA"
+display_name = "Nemotron 3.5 Transcribe 30B-A4B"
+href = "https://huggingface.co/nvidia/Nemotron-3.5-Transcribe-30B-A4B"
+notes = "Open-weight speech LLM served through vLLM chat completions with the CTC timestamp middleware; model-card settings (speaker-tag prompt, no thinking, temperature 0, seed 0). Scored on the speaker-activity segments the server returns alongside the <spk:N>-tagged transcript, as the model card recommends."
+
+[nemotron-3-5-transcribe-30b-a4b.options]
+upload = "flac"
+user_agent = "brev-transcribe-client/1.0"
