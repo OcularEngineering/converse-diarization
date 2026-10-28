@@ -202,8 +202,11 @@ model = "nvidia/Nemotron-3.5-Transcribe-30B-A4B"
 vendor = "NVIDIA"
 display_name = "Nemotron 3.5 Transcribe 30B-A4B"
 href = "https://huggingface.co/nvidia/Nemotron-3.5-Transcribe-30B-A4B"
-notes = "Open-weight speech LLM served through vLLM chat completions with the CTC timestamp middleware; model-card settings (speaker-tag prompt, no thinking, temperature 0, seed 0). Scored on the speaker-activity segments the server returns alongside the <spk:N>-tagged transcript, as the model card recommends."
+notes = "Open-weight speech LLM served through vLLM chat completions with the CTC timestamp middleware; NVIDIA's leaderboard evaluation guide settings (multi-speaker speaker-tag prompt, empty system prompt, no thinking, temperature 0, top-p 1, seed 0, 16,384-token budget, generation-loop cleanup). Scored on the speaker-activity segments the server returns alongside the <spk:N>-tagged transcript, as the model card recommends. The evaluation deployment's gateway drops requests after about a minute, so mixes are split into 8-minute windows with 30 s of overlap and speakers are linked by who is speaking in that overlap."
 
 [nemotron-3-5-transcribe-30b-a4b.options]
 upload = "flac"
 user_agent = "brev-transcribe-client/1.0"
+max_clip_s = 480
+window_s = 480
+overlap_s = 30

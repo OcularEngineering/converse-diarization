@@ -208,7 +208,7 @@ upload = "mp3"                   # 25 MB upload cap
 | `azure`             | `POST {speech host}/speechtotext/transcriptions:transcribe` with enhanced mode; the host comes from `AZURE_FOUNDRY_ENDPOINT` | words, merged with the 0.2 s rule |
 | `elevenlabs`        | `POST {base_url}/speech-to-text` with `diarize=true`                    | words, merged with the 0.2 s rule |
 | `meta`              | `POST {base_url}/asr/transcribe` with `mode=DIARIZATION`; long mixes are split into 3-minute windows and speakers linked across a 30 s overlap | segments |
-| `nemotron-transcribe` | `POST {NEMOTRON_TRANSCRIBE_ENDPOINT}/v1/chat/completions` (vLLM, base64 audio, the model card's speaker-tag prompt, `capture_ctc_timestamps`); scores the response's `ctc_timestamps.diarization` spans (`segments = "words"` scores the tagged words instead) | segments |
+| `nemotron-transcribe` | `POST {NEMOTRON_TRANSCRIBE_ENDPOINT}/v1/chat/completions` (vLLM, base64 audio, the evaluation guide's multi-speaker prompt and decoding settings, `capture_ctc_timestamps`, generation-loop cleanup); scores the response's `ctc_timestamps.diarization` spans (`segments = "words"` scores the tagged words instead). `max_clip_s` / `window_s` / `overlap_s` split mixes that a gateway cannot serve in one request and link speakers across the overlap | segments |
 | `xai`               | `POST {base_url}/stt` with `diarize=true`                               | words, merged with the 0.2 s rule |
 | `pyannote`          | local `pyannote.audio` pipeline (`uv sync --extra local`, `HF_TOKEN`)   | segments |
 | `diarizen`          | local DiariZen pipeline in `.cache/diarizen-venv` (its pyannote 3.1 fork) | segments |

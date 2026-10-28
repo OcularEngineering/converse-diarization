@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import re
 import sys
@@ -28,6 +29,7 @@ from converse_diarization.providers.nemo import (
 from converse_diarization.providers.nemotron_transcribe import (
     DIARIZATION_PROMPT,
     NemotronTranscribeProvider,
+    cleanup_generation_loops,
     diarization_segments,
     speaker_label,
     word_segments,
@@ -878,6 +880,70 @@ def test_nemotron_transcribe_check(monkeypatch: pytest.MonkeyPatch):
     assert NemotronTranscribeProvider(_config("nemotron-transcribe", NEMOTRON_MODEL)).check() == []
     assert NemotronTranscribeProvider(_config("nemotron-transcribe", NEMOTRON_MODEL)).required_env() == (
         "NEMOTRON_TRANSCRIBE_ENDPOINT",
+    )
+
+
+def test_nemotron_transcribe_collapses_generation_loops_once(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("NEMOTRON_TRANSCRIBE_ENDPOINT", NEMOTRON_ENDPOINT)
+    looped = "<spk:0> hi there " + "a" * 40 + " <spk:1> " + "yes yes " * 25
+    body = _nemotron_body(choices=[{"finish_reason": "stop", "message": {"role": "assistant", "content": looped}}])
+    recorder = Recorder(_queue(httpx.Response(200, json=body)))
+    provider = NemotronTranscribeProvider(_config("nemotron-transcribe", NEMOTRON_MODEL), transport=recorder.transport)
+
+    hypothesis = provider.diarize(wav, language="en", conversation_id="conv-6")
+
+    assert hypothesis.raw["content"] == "<spk:0> hi there a <spk:1> yes "
+    assert hypothesis.raw["generation_loops_collapsed"] is True
+    assert cleanup_generation_loops("<spk:0> hi there") == "<spk:0> hi there"
+    assert cleanup_generation_loops("ab" * 19) == "ab" * 19  # 19 repeats stay; 20+ collapse
+    assert cleanup_generation_loops("ab" * 20) == "ab"
+
+
+def test_nemotron_transcribe_windows_long_mixes_and_links_speakers(monkeypatch: pytest.MonkeyPatch, wav: Path):
+    monkeypatch.setenv("NEMOTRON_TRANSCRIBE_ENDPOINT", NEMOTRON_ENDPOINT)
+    first = _nemotron_body(
+        ctc_timestamps={"words": [], "diarization": [{"start": 0.0, "end": 0.3, "speaker": 0}], "error": None}
+    )
+    # The second window starts at 0.2 s and labels the same voice "5"; the overlap [0.2, 0.3) links it to "0".
+    second = _nemotron_body(
+        ctc_timestamps={
+            "words": [],
+            "diarization": [{"start": 0.0, "end": 0.1, "speaker": 5}, {"start": 0.15, "end": 0.3, "speaker": 5}],
+            "error": None,
+        }
+    )
+    recorder = Recorder(_queue(httpx.Response(200, json=first), httpx.Response(200, json=second)))
+    provider = NemotronTranscribeProvider(
+        _config("nemotron-transcribe", NEMOTRON_MODEL, max_clip_s=0.3, window_s=0.3, overlap_s=0.1),
+        transport=recorder.transport,
+    )
+    assert provider.check() == []
+
+    with provider:
+        hypothesis = provider.diarize(wav, language="en", conversation_id="conv-7")
+
+    assert len(recorder.requests) == 2
+    assert hypothesis.granularity == "segment" and hypothesis.duration_s == pytest.approx(0.5)
+    assert hypothesis.segments == (
+        {"speaker": "0", "start_s": 0.0, "end_s": 0.3, "text": None},
+        {"speaker": "0", "start_s": pytest.approx(0.35), "end_s": pytest.approx(0.5), "text": None},
+    )
+    windows = hypothesis.raw["windows"]
+    assert [(w["start_s"], w["end_s"]) for w in windows] == [(0.0, pytest.approx(0.3)), (pytest.approx(0.2), 0.5)]
+    assert all(w["finish_reason"] == "stop" and w["upload"]["format"] == "flac" for w in windows)
+    assert hypothesis.raw["settings"]["max_clip_s"] == 0.3 and hypothesis.raw["settings"]["overlap_s"] == 0.1
+    for request in recorder.requests:  # each window uploads 0.3 s of FLAC, not the whole 0.5 s mix
+        url = json.loads(request.content)["messages"][0]["content"][1]["audio_url"]["url"]
+        info = sf.info(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+        assert info.frames / info.samplerate == pytest.approx(0.3, abs=0.01)
+
+    bad = NemotronTranscribeProvider(_config("nemotron-transcribe", NEMOTRON_MODEL, max_clip_s=10, overlap_s=10))
+    assert any("overlap_s" in item for item in bad.check())
+    assert any(
+        "window_s" in item
+        for item in NemotronTranscribeProvider(
+            _config("nemotron-transcribe", NEMOTRON_MODEL, max_clip_s=10, window_s=20)
+        ).check()
     )
 
 
